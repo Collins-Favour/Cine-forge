@@ -1,0 +1,19 @@
+flowchart LR
+    A[User Frontend<br>React.js] <--> B{Backend API<br>Python/Flask};
+    B <--> C[Database<br>MySQL];
+
+    subgraph Processes
+        P1[Script & NLP<br>Processing]
+        P2[AI Visual<br>Generation]
+        P3[Mood & Location<br>Suggestion]
+        P4[C-Space<br>Collaboration]
+    end
+
+    B <--> P1;
+    B <--> P2;
+    B <--> P3;
+    B <--> P4;
+
+    style A fill:#cde4ff
+    style B fill:#ffebcc
+    style C fill:#e4d0ff
