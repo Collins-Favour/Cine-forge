@@ -22,7 +22,7 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     first_name VARCHAR(100),
     last_name VARCHAR(100),
-    profile_pic_url VARCHAR(500),
+    profile_pic_url LONGTEXT COMMENT 'Stores base64-encoded profile picture',
     bio TEXT,
     role ENUM('student', 'filmmaker', 'professional', 'admin') DEFAULT 'filmmaker',
     is_active BOOLEAN DEFAULT TRUE,
@@ -67,7 +67,7 @@ CREATE TABLE projects (
     budget_range VARCHAR(50),
     production_stage ENUM('concept', 'pre-production', 'production', 'post-production', 'completed') DEFAULT 'concept',
     created_by INT NOT NULL,
-    thumbnail_url VARCHAR(500),
+    thumbnail_url LONGTEXT COMMENT 'Stores base64-encoded project thumbnail',
     is_public BOOLEAN DEFAULT FALSE,
     is_archived BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -311,6 +311,7 @@ CREATE TABLE cspace_messages (
     user_id INT NOT NULL,
     parent_message_id INT COMMENT 'For threaded replies',
     message_type ENUM('text', 'annotation', 'feedback', 'approval', 'file') DEFAULT 'text',
+    channel VARCHAR(50) DEFAULT 'general' NOT NULL COMMENT 'Channel name (general, production, creative, budget, etc.)',
     message_content TEXT NOT NULL,
     
     -- Attachments and references
@@ -337,7 +338,8 @@ CREATE TABLE cspace_messages (
     FOREIGN KEY (referenced_panel_id) REFERENCES storyboard_panels(panel_id) ON DELETE SET NULL,
     INDEX idx_project_id (project_id),
     INDEX idx_user_id (user_id),
-    INDEX idx_sent_at (sent_at)
+    INDEX idx_sent_at (sent_at),
+    INDEX idx_channel (channel)
 ) ENGINE=InnoDB;
 
 -- Message reactions - Emoji reactions to messages

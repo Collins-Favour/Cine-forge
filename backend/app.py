@@ -87,6 +87,13 @@ def create_app(config_name=None):
             'documentation': '/api/docs'
         }), 200
     
+    # Serve uploaded files
+    @app.route('/uploads/<path:filename>')
+    def uploaded_file(filename):
+        from flask import send_from_directory
+        upload_folder = app.config['UPLOAD_FOLDER']
+        return send_from_directory(upload_folder, filename)
+    
     return app
 
 

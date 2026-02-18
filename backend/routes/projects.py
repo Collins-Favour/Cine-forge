@@ -21,17 +21,23 @@ def get_projects():
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
         
-        print(f"📂 Fetching projects for user_id: {user_id}")
+        print(f"📂 Fetching projects for user_id: {user_id} (type: {type(user_id).__name__})")
         
-        # Get owned projects
-        owned_projects_query = Project.query.filter_by(created_by=user_id, is_archived=False)
+        # Get owned projects - explicitly filter by user_id
+        owned_projects_query = Project.query.filter(
+            Project.created_by == user_id,
+            Project.is_archived == False
+        )
         owned_count = owned_projects_query.count()
         print(f"   Owned projects: {owned_count}")
         
-        # Get collaborated projects
-        collaborations = ProjectCollaborator.query.filter_by(user_id=user_id, invitation_status='accepted').all()
+        # Get collaborated projects - must have accepted invitation
+        collaborations = ProjectCollaborator.query.filter(
+            ProjectCollaborator.user_id == user_id,
+            ProjectCollaborator.invitation_status == 'accepted'
+        ).all()
         collab_project_ids = [c.project_id for c in collaborations if c.project_id]
-        print(f"   Collaborated projects: {len(collab_project_ids)}")
+        print(f"   Collaborated project IDs: {collab_project_ids}")
         
         # Build query based on whether there are collaborations
         if collab_project_ids:
@@ -52,8 +58,16 @@ def get_projects():
         
         print(f"   Total projects returned: {len(all_projects.items)}")
         
+        # Get separate owned and collaborated projects for frontend
+        owned_projects = owned_projects_query.all()
+        collaborated_projects = []
+        if collab_project_ids:
+            collaborated_projects = collab_projects_query.all()
+        
         return jsonify({
             'projects': [p.to_dict(include_stats=True) for p in all_projects.items],
+            'owned_projects': [p.to_dict(include_stats=True) for p in owned_projects],
+            'collaborated_projects': [p.to_dict(include_stats=True) for p in collaborated_projects],
             'pagination': {
                 'page': page,
                 'per_page': per_page,
@@ -89,15 +103,15 @@ def create_project():
     user_id = int(get_jwt_identity())
     data = request.get_json()
     
-    # Check project limit for free users
-    from models import User, SystemSetting
-    user = User.query.get(user_id)
-    if user.role != 'professional' and user.role != 'admin':
-        max_projects = SystemSetting.query.filter_by(setting_key='max_free_projects').first()
-        if max_projects:
-            project_count = Project.query.filter_by(created_by=user_id, is_archived=False).count()
-            if project_count >= max_projects.get_value():
-                return jsonify({'error': 'Project limit reached. Upgrade to create more projects.'}), 403
+    # Project limit check disabled - unlimited projects for all users
+    # from models import User, SystemSetting
+    # user = User.query.get(user_id)
+    # if user.role != 'professional' and user.role != 'admin':
+    #     max_projects = SystemSetting.query.filter_by(setting_key='max_free_projects').first()
+    #     if max_projects:
+    #         project_count = Project.query.filter_by(created_by=user_id, is_archived=False).count()
+    #         if project_count >= max_projects.get_value():
+    #             return jsonify({'error': 'Project limit reached. Upgrade to create more projects.'}), 403
     
     project = Project(
         title=data['title'],
@@ -139,41 +153,54 @@ def create_project():
             print("📚 Initializing Groq service...")
             groq_service = GroqService()
             
-            # Create input for script generation
-            script_input = f"""Title: {data['title']}
-Genre: {data.get('genre', 'Drama')}
-Logline: {data.get('logline', '')}
-Synopsis: {data.get('synopsis', '')}
-
-Based on the above information, generate a complete screenplay with:
-- Proper screenplay format (INT./EXT., scene headings, action lines, dialogue)
-- Character introductions and development
-- Three-act structure
-- Compelling dialogue
-- Visual descriptions"""
+            print("🎬 Generating screenplay with Groq AI...")
+            # Generate screenplay using Groq AI with mood and lighting suggestions
+            script_analysis = groq_service.generate_screenplay(
+                title=data['title'],
+                synopsis=data.get('synopsis', ''),
+                genre=data.get('genre', 'Drama'),
+                logline=data.get('logline', '')
+            )
             
-            print("🎬 Generating script with Groq AI...")
-            # Generate script using Groq AI
-            script_analysis = groq_service.analyze_script(script_input)
-            
-            print(f"📝 Script analysis result: {script_analysis is not None}")
+            print(f"📝 Script generation result: {script_analysis is not None}")
             
             if script_analysis:
-                print("✅ Script analysis successful, creating script version...")
+                print("✅ Script generation successful, creating script version...")
                 # Create formatted script content from analysis
                 script_content = f"# {data['title']}\n\n"
                 script_content += f"**Genre:** {data.get('genre', 'Drama')}\n"
                 script_content += f"**Logline:** {data.get('logline', '')}\n\n"
-                script_content += f"## SYNOPSIS\n\n{data.get('synopsis', '')}\n\n"
+                script_content += f"## SYNOPSIS\n\n{script_analysis.get('synopsis', data.get('synopsis', ''))}\n\n"
                 script_content += "## SCREENPLAY\n\n"
                 
-                # Add scenes from analysis
+                # Add scenes from analysis with mood and lighting
                 if script_analysis.get('scenes'):
                     for i, scene in enumerate(script_analysis['scenes'], 1):
                         if isinstance(scene, dict):
                             script_content += f"### SCENE {i}\n"
                             script_content += f"**{scene.get('heading', f'INT. LOCATION - DAY')}**\n\n"
-                            script_content += f"{scene.get('description', '')}\n\n"
+                            
+                            # Add mood and lighting information
+                            if scene.get('mood'):
+                                script_content += f"**MOOD:** {scene.get('mood')}\n\n"
+                            
+                            if scene.get('lighting'):
+                                script_content += f"**LIGHTING:** {scene.get('lighting')}\n\n"
+                            
+                            if scene.get('camera_notes'):
+                                script_content += f"**CAMERA:** {scene.get('camera_notes')}\n\n"
+                            
+                            # Add description
+                            if scene.get('description'):
+                                script_content += f"{scene.get('description')}\n\n"
+                            
+                            # Add dialogue
+                            if scene.get('dialogue'):
+                                for dialogue_line in scene.get('dialogue', []):
+                                    if isinstance(dialogue_line, dict):
+                                        character = dialogue_line.get('character', 'CHARACTER')
+                                        line = dialogue_line.get('line', '')
+                                        script_content += f"**{character}**\n{line}\n\n"
                         else:
                             script_content += f"### SCENE {i}\n{scene}\n\n"
                 
@@ -206,45 +233,55 @@ Based on the above information, generate a complete screenplay with:
                 
                 script_generated = True
                 
-                # Auto-generate storyboard panels from script scenes
+                # Auto-generate scenes and ONE storyboard panel
                 if script_analysis.get('scenes'):
                     from models import Scene, StoryboardPanel
                     from services import GeminiService
                     
                     gemini_service = GeminiService()
                     
-                    for i, scene_data in enumerate(script_analysis['scenes'][:5], 1):  # Limit to first 5 scenes
-                        # Create scene
+                    # Create all scenes
+                    for i, scene_data in enumerate(script_analysis['scenes'], 1):
                         scene_desc = scene_data.get('description', str(scene_data)) if isinstance(scene_data, dict) else str(scene_data)
                         scene = Scene(
                             project_id=project.project_id,
                             scene_number=i,
                             slug=f"scene-{i}",
-                            description=scene_desc[:500]  # Limit description length
+                            description=scene_desc[:500]
                         )
                         db.session.add(scene)
-                        db.session.flush()
+                    
+                    db.session.flush()
+                    
+                    # Only create ONE storyboard panel from the first scene
+                    first_scene = Scene.query.filter_by(project_id=project.project_id, scene_number=1).first()
+                    if first_scene:
+                        first_scene_data = script_analysis['scenes'][0]
+                        scene_desc = first_scene_data.get('description', str(first_scene_data)) if isinstance(first_scene_data, dict) else str(first_scene_data)
                         
-                        # Generate storyboard prompt using Gemini
+                        # Generate storyboard prompt using title and synopsis
+                        prompt_base = f"{data['title']}: {data.get('synopsis', data.get('logline', ''))}"
                         image_prompt = gemini_service.generate_storyboard_prompt(
-                            scene_desc, 
+                            f"{prompt_base}\\n\\nOpening Scene: {scene_desc}",
                             style=data.get('genre', 'cinematic').lower()
                         )
                         
-                        if image_prompt:
-                            # Create storyboard panel
-                            panel = StoryboardPanel(
-                                scene_id=scene.scene_id,
-                                panel_number=1,
-                                image_prompt=image_prompt,
-                                style_reference=data.get('genre', 'cinematic'),
-                                status='pending',
-                                shot_type='medium'
-                            )
-                            db.session.add(panel)
+                        if not image_prompt:
+                            image_prompt = f"Cinematic {data.get('genre', 'film')} opening scene: {scene_desc[:200]}"
+                        
+                        # Create single storyboard panel
+                        panel = StoryboardPanel(
+                            scene_id=first_scene.scene_id,
+                            panel_number=1,
+                            image_prompt=image_prompt,
+                            style_reference=data.get('genre', 'cinematic'),
+                            status='pending',
+                            shot_type='establishing'
+                        )
+                        db.session.add(panel)
                     
                     log_activity(project.project_id, user_id, 'storyboard_generated', 
-                               'AI generated storyboard panels from script')
+                               'AI generated opening storyboard panel')
                 
                 db.session.commit()
         except Exception as e:
@@ -389,19 +426,24 @@ def add_collaborator(project_id):
     )
 
     db.session.add(collaborator)
-
+    db.session.flush()  # Get the collaboration_id
+    
     # Create an in-app notification for the invited user
     try:
         from models import Notification
+        project = Project.query.get(project_id)
+        inviter = User.query.get(user_id)
         notif = Notification(
             user_id=target_user.user_id,
             notification_type='collaboration_invite',
-            title=f"You've been invited to collaborate on {Project.query.get(project_id).title}",
-            message=f"{User.query.get(user_id).username} invited you to join the project as {data['role']}",
-            link_url=f'/projects/{project_id}'
+            title=f"You've been invited to collaborate on {project.title}",
+            message=f"{inviter.username} invited you to join the project as {data['role']}",
+            link_url=f'/projects/{project_id}',
+            action_data=f'{{"collaboration_id": {collaborator.collaboration_id}, "project_id": {project_id}}}'
         )
         db.session.add(notif)
-    except Exception:
+    except Exception as e:
+        print(f"❌ Error creating notification: {e}")
         # If Notification model or DB insert fails, continue without blocking invite
         pass
 
@@ -434,6 +476,50 @@ def add_collaborator(project_id):
         'message': 'Collaborator invited successfully',
         'collaborator': collab_data
     }), 201
+
+
+@projects_bp.route('/<int:project_id>/collaborators/<int:collaboration_id>/respond', methods=['POST'])
+@jwt_required()
+@validate_request(['response'])
+def respond_to_invitation(project_id, collaboration_id):
+    """Accept or decline collaboration invitation"""
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    response = data['response']  # 'accept' or 'decline'
+    
+    if response not in ['accept', 'decline']:
+        return jsonify({'error': 'Response must be "accept" or "decline"'}), 400
+    
+    # Get the collaboration record
+    collaborator = ProjectCollaborator.query.get(collaboration_id)
+    
+    if not collaborator:
+        return jsonify({'error': 'Invitation not found'}), 404
+    
+    # Verify this invitation is for the current user
+    if collaborator.user_id != user_id:
+        return jsonify({'error': 'This invitation is not for you'}), 403
+    
+    # Verify invitation is still pending
+    if collaborator.invitation_status != 'pending':
+        return jsonify({'error': f'Invitation already {collaborator.invitation_status}'}), 409
+    
+    if response == 'accept':
+        collaborator.invitation_status = 'accepted'
+        collaborator.joined_at = datetime.utcnow()
+        log_activity(project_id, user_id, 'collaboration_accepted', f'User accepted collaboration invitation')
+        message = 'Invitation accepted'
+    else:
+        collaborator.invitation_status = 'declined'
+        log_activity(project_id, user_id, 'collaboration_declined', f'User declined collaboration invitation')
+        message = 'Invitation declined'
+    
+    db.session.commit()
+    
+    return jsonify({
+        'message': message,
+        'collaborator': collaborator.to_dict()
+    }), 200
 
 
 @projects_bp.route('/<int:project_id>/collaborators/<int:collaboration_id>', methods=['DELETE'])
@@ -658,9 +744,12 @@ def generate_project_content(project_id):
             logline=project.logline or ''
         )
         
-        if not script_analysis:
-            print("❌ Groq API returned no data")
-            return jsonify({'error': 'Script generation failed. Please ensure your project has a detailed synopsis.'}), 500
+        if not script_analysis or not script_analysis.get('scenes'):
+            print("❌ Groq API returned no scenes or invalid data")
+            print(f"Script analysis: {script_analysis}")
+            return jsonify({
+                'error': 'Script generation failed. The AI returned invalid data. Please try again or provide more details in your synopsis.'
+            }), 500
         
         print(f"✅ Groq generated script with {len(script_analysis.get('scenes', []))} scenes")
         
@@ -671,12 +760,22 @@ def generate_project_content(project_id):
         script_content += f"## SYNOPSIS\n\n{script_analysis.get('synopsis', project.synopsis) or ''}\n\n"
         script_content += "## SCREENPLAY\n\n"
         
-        # Add scenes from analysis
+        # Add scenes from analysis with mood and lighting
         if script_analysis.get('scenes'):
             for i, scene in enumerate(script_analysis['scenes'], 1):
                 if isinstance(scene, dict):
                     script_content += f"### SCENE {i}\n"
                     script_content += f"**{scene.get('heading', f'INT. LOCATION - DAY')}**\n\n"
+                    
+                    # Add mood and lighting information
+                    if scene.get('mood'):
+                        script_content += f"**MOOD:** {scene.get('mood')}\n\n"
+                    
+                    if scene.get('lighting'):
+                        script_content += f"**LIGHTING:** {scene.get('lighting')}\n\n"
+                    
+                    if scene.get('camera_notes'):
+                        script_content += f"**CAMERA:** {scene.get('camera_notes')}\n\n"
                     
                     # Add action/description
                     if scene.get('description') or scene.get('action'):
@@ -719,14 +818,14 @@ def generate_project_content(project_id):
         )
         db.session.add(ai_log)
         
-        # 2. Generate scenes and storyboards
+        # 2. Generate scenes and ONE storyboard panel
         from models import Scene, StoryboardPanel
         scenes_created = 0
         panels_created = 0
         
         if script_analysis.get('scenes'):
-            for i, scene_data in enumerate(script_analysis['scenes'][:5], 1):
-                # Create scene
+            # Create all scenes
+            for i, scene_data in enumerate(script_analysis['scenes'], 1):
                 scene_desc = scene_data.get('description', str(scene_data)) if isinstance(scene_data, dict) else str(scene_data)
                 scene = Scene(
                     project_id=project_id,
@@ -735,37 +834,84 @@ def generate_project_content(project_id):
                     description=scene_desc[:500]
                 )
                 db.session.add(scene)
-                db.session.flush()
                 scenes_created += 1
-                
-                # Generate storyboard prompt
+            
+            db.session.flush()
+            
+            # Only create ONE storyboard panel from the first scene
+            first_scene = Scene.query.filter_by(project_id=project_id, scene_number=1).first()
+            if first_scene:
                 try:
-                    image_prompt = gemini_service.generate_storyboard_prompt(
-                        scene_desc,
-                        style=project.genre.lower() if project.genre else 'cinematic'
+                    print("🧠 Using INTELLIGENT storyboard generation (Gemini-based)...")
+                    print("   Analyzing project directly from logline and synopsis...")
+                    
+                    # Use intelligent generation that doesn't rely on Groq script
+                    image_prompt = gemini_service.generate_storyboard_from_project(
+                        title=project.title,
+                        genre=project.genre or 'Drama',
+                        logline=project.logline or '',
+                        synopsis=project.synopsis or ''
                     )
                     
-                    # If Gemini fails, create a basic prompt from the scene description
+                    # Fallback if Gemini fails
                     if not image_prompt:
-                        print(f"Gemini service returned None for scene {i}, using fallback prompt")
-                        image_prompt = f"Cinematic {project.genre or 'film'} scene: {scene_desc[:200]}"
+                        print("⚠️ Intelligent generation failed, using fallback")
+                        first_scene_data = script_analysis['scenes'][0]
+                        scene_desc = first_scene_data.get('description', str(first_scene_data)) if isinstance(first_scene_data, dict) else str(first_scene_data)
+                        image_prompt = f"Cinematic {project.genre or 'film'} opening scene: {project.logline or project.synopsis[:200]}"
                     
+                    print(f"✅ Final image prompt ({len(image_prompt)} chars):")
+                    print(f"   {image_prompt}")
+                    print(f"   ---")
+                    
+                    # Create panel with pending status first
                     panel = StoryboardPanel(
-                        scene_id=scene.scene_id,
+                        scene_id=first_scene.scene_id,
                         panel_number=1,
                         image_prompt=image_prompt,
                         style_reference=project.genre or 'cinematic',
-                        status='pending',
-                        shot_type='medium'
+                        status='generating',
+                        shot_type='establishing'
                     )
                     db.session.add(panel)
-                    panels_created += 1
-                    print(f"Created panel {panels_created} for scene {i}")
+                    db.session.flush()  # Get panel_id
+                    
+                    # Immediately generate the actual image using Gemini Imagen
+                    print(f"🎨 Generating actual image with Gemini Imagen 3...")
+                    generated_image = gemini_service.generate_image(
+                        prompt=image_prompt,
+                        negative_prompt="blurry, bad quality, distorted, text, watermark, low resolution"
+                    )
+                    
+                    if generated_image:
+                        panel.generated_image_url = generated_image
+                        panel.status = 'completed'
+                        panel.generation_timestamp = db.func.now()
+                        panel.ai_model_used = 'Gemini Imagen 3'
+                        print(f"✅ Image generated and saved successfully!")
+                        
+                        # Log image generation
+                        image_log = AIProcessingLog(
+                            project_id=project_id,
+                            user_id=user_id,
+                            operation_type='storyboard_image_generation',
+                            input_data={'prompt': image_prompt, 'logline': project.logline, 'synopsis': project.synopsis},
+                            output_data={'status': 'completed', 'has_image': True},
+                            ai_model='Gemini Imagen 3',
+                            status='completed'
+                        )
+                        db.session.add(image_log)
+                    else:
+                        panel.status = 'failed'
+                        print(f"❌ Image generation failed")
+                    
+                    panels_created = 1
+                    print(f"✅ Created 1 storyboard panel with {'generated image' if generated_image else 'pending image'}")
+                    
                 except Exception as panel_error:
-                    print(f"Error creating panel for scene {i}: {panel_error}")
+                    print(f"❌ Error creating/generating storyboard panel: {panel_error}")
                     import traceback
                     traceback.print_exc()
-                    # Continue with next scene even if panel fails
         
         log_activity(project_id, user_id, 'content_generated',
                     f'Generated script with {scenes_created} scenes and {panels_created} storyboard panels')

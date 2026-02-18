@@ -22,7 +22,7 @@ class Project(db.Model):
         index=True
     )
     created_by = db.Column(db.Integer, db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False, index=True)
-    thumbnail_url = db.Column(db.String(500))
+    thumbnail_url = db.Column(db.Text)  # Changed to Text to support base64-encoded images
     is_public = db.Column(db.Boolean, default=False)
     is_archived = db.Column(db.Boolean, default=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

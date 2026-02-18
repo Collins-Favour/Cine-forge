@@ -7,24 +7,86 @@ import {
   Settings, 
   LogOut,
   Menu,
-  X
+  X,
+  Bell,
+  Users,
+  Activity
 } from 'lucide-react'
 import { useState } from 'react'
+import { useQuery } from 'react-query'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '@store/authStore'
+import api from '@services/api'
 
 export default function MainLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const location = useLocation()
   const { user, logout } = useAuthStore()
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Projects', href: '/projects', icon: FolderOpen },
-    { name: 'C-Space', href: '/c-space', icon: MessageSquare },
+    ...(user?.role === 'admin' 
+      ? [
+          { name: 'User Management', href: '/admin/users', icon: Users },
+          { name: 'Project Management', href: '/admin/projects', icon: FolderOpen }
+        ]
+      : [{ name: 'Projects', href: '/projects', icon: FolderOpen }]
+    ),
     { name: 'Settings', href: '/settings', icon: Settings },
   ]
 
   const isActive = (path) => location.pathname === path
+
+  // Fetch notifications
+  const { data: notificationsData } = useQuery(
+    'notifications',
+    async () => {
+      const response = await api.get('/collaboration/notifications?unread_only=true')
+      return response.data
+    },
+    {
+      enabled: !!user?.user_id,
+      refetchInterval: 30000, // Refetch every 30 seconds
+    }
+  )
+
+  const notifications = notificationsData?.notifications || []
+  const unreadCount = notifications.length
+
+  const handleNotificationClick = async (notification) => {
+    // Mark as read
+    try {
+      await api.post(`/collaboration/notifications/${notification.notification_id}/read`)
+      
+      // Only redirect if it's not a collaboration invite (those have action buttons)
+      if (notification.notification_type !== 'collaboration_invite') {
+        window.location.href = notification.link_url || '/dashboard'
+      }
+    } catch (error) {
+      console.error('Error marking notification as read:', error)
+    }
+  }
+
+  const handleInvitationResponse = async (notification, response) => {
+    try {
+      const actionData = JSON.parse(notification.action_data || '{}')
+      const { collaboration_id, project_id } = actionData
+      
+      await api.post(`/projects/${project_id}/collaborators/${collaboration_id}/respond`, {
+        response: response
+      })
+      
+      // Mark notification as read
+      await api.post(`/collaboration/notifications/${notification.notification_id}/read`)
+      
+      // Refresh notifications
+      window.location.reload()
+    } catch (error) {
+      console.error('Error responding to invitation:', error)
+      alert(error.response?.data?.error || 'Failed to respond to invitation')
+    }
+  }
 
   return (
     <div className="min-h-screen bg-dark-50">
@@ -112,6 +174,98 @@ export default function MainLayout() {
               <Menu className="w-6 h-6" />
             </button>
             <div className="flex-1 lg:flex-none" />
+            
+            {/* Notifications */}
+            <div className="relative">
+              <button
+                onClick={() => setNotificationsOpen(!notificationsOpen)}
+                className="relative p-2 text-dark-600 hover:text-dark-900 hover:bg-dark-200 rounded-lg transition-colors"
+              >
+                <Bell className="w-6 h-6" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {/* Notifications Dropdown */}
+              <AnimatePresence>
+                {notificationsOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setNotificationsOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-dark-200 z-50 max-h-96 overflow-y-auto"
+                    >
+                      <div className="p-4 border-b border-dark-200">
+                        <h3 className="font-semibold text-dark-900">Notifications</h3>
+                      </div>
+                      
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center text-dark-600">
+                          <Bell className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                          <p>No new notifications</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-dark-200">
+                          {notifications.map((notification) => {
+                            const isInvite = notification.notification_type === 'collaboration_invite'
+                            
+                            return (
+                              <div
+                                key={notification.notification_id}
+                                className="p-4"
+                              >
+                                <div className={!isInvite ? 'cursor-pointer hover:bg-dark-50' : ''} onClick={() => !isInvite && handleNotificationClick(notification)}>
+                                  <p className="font-medium text-dark-900 mb-1">
+                                    {notification.title}
+                                  </p>
+                                  <p className="text-sm text-dark-600 mb-2">
+                                    {notification.message}
+                                  </p>
+                                  <p className="text-xs text-dark-500 mb-2">
+                                    {new Date(notification.created_at).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                
+                                {isInvite && (
+                                  <div className="flex gap-2 mt-3">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleInvitationResponse(notification, 'accept')
+                                      }}
+                                      className="flex-1 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors text-sm font-medium"
+                                    >
+                                      Accept
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleInvitationResponse(notification, 'decline')
+                                      }}
+                                      className="flex-1 px-3 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors text-sm font-medium"
+                                    >
+                                      Decline
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </header>
 

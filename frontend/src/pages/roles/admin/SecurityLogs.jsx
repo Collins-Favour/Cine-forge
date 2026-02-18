@@ -10,7 +10,11 @@ export default function SecurityLogs() {
 
   const { data: logsData, isLoading } = useQuery(
     ['admin-security-logs', page],
-    () => adminApi.getSecurityLogs({ page, per_page: 50 })
+    () => adminApi.getSecurityLogs({ page, per_page: 50 }),
+    {
+      refetchInterval: 5000, // Refresh every 5 seconds
+      refetchIntervalInBackground: true
+    }
   )
 
   const logs = logsData?.data?.logs || []

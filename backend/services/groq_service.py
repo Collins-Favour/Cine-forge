@@ -84,8 +84,20 @@ Provide the response in JSON format with keys: synopsis, characters (array), sce
         return None
     
     def generate_screenplay(self, title: str, synopsis: str, genre: str = 'Drama', logline: str = '') -> Optional[Dict]:
-        """Generate a complete screenplay from synopsis"""
-        prompt = f"""Please generate a complete movie script based on the following information:
+        """Generate a complete screenplay from synopsis with mood and lighting suggestions"""
+        
+        # Load prompt template from file
+        import os
+        prompt_file = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'script_generation.txt')
+        
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            print("✅ Loaded script generation prompt from file")
+        except Exception as e:
+            print(f"⚠️ Could not load prompt file: {e}, using fallback")
+            # Fallback prompt
+            prompt_template = """Please generate a complete movie script based on the following information:
 
 Title: {title}
 Genre: {genre}
@@ -94,20 +106,21 @@ Logline: {logline}
 Synopsis:
 {synopsis}
 
-Generate a professional screenplay with:
-1. Properly formatted scene headings (INT./EXT., LOCATION, TIME)
-2. Detailed scene descriptions and visual storytelling
-3. Character dialogue with proper formatting
-4. Scene transitions
-5. At least 5-8 key scenes that tell the complete story
-
-Provide the response in JSON format with:
-- synopsis: A brief 2-3 sentence summary
-- characters: Array of character objects with 'name' and 'description'
-- scenes: Array of scene objects with 'heading', 'description', 'dialogue' (array), 'action'
-- themes: Array of main themes
-- tone: Overall tone of the script
-- pacing: Description of the pacing"""
+Generate a professional screenplay with scenes, dialogue, mood, lighting, and camera notes in JSON format."""
+        
+        # Fill in template variables
+        prompt = prompt_template.format(
+            title=title,
+            genre=genre,
+            logline=logline or 'Not provided',
+            synopsis=synopsis
+        )
+        
+        print("\n" + "="*80)
+        print("📝 FULL SCRIPT GENERATION PROMPT")
+        print("="*80)
+        print(prompt)
+        print("="*80 + "\n")
         
         payload = {
             "model": "llama-3.3-70b-versatile",
@@ -119,21 +132,85 @@ Provide the response in JSON format with:
             "max_tokens": 8000
         }
         
+        print("🚀 Sending request to Groq API (Llama 3.3 70B)...")
         result = self._make_request("chat/completions", payload)
         
         if result and 'choices' in result:
             try:
                 content = result['choices'][0]['message']['content']
+                print(f"📄 Groq response received ({len(content)} chars)")
+                
                 # Extract JSON from response
                 json_start = content.find('{')
                 json_end = content.rfind('}') + 1
+                
                 if json_start != -1 and json_end > json_start:
-                    return json.loads(content[json_start:json_end])
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"Error parsing Groq screenplay response: {e}")
-                print(f"Raw content: {content}")
+                    json_str = content[json_start:json_end]
+                    parsed = json.loads(json_str)
+                    print(f"✅ Successfully parsed JSON with {len(parsed.get('scenes', []))} scenes")
+                    return parsed
+                else:
+                    print(f"❌ No valid JSON found in response")
+                    print(f"Response preview: {content[:500]}")
+                    
+                    # Try to create a basic structure from the response
+                    return {
+                        'synopsis': synopsis[:200],
+                        'scenes': [{
+                            'heading': 'INT. LOCATION - DAY',
+                            'description': content[:500] if content else synopsis[:200],
+                            'dialogue': [],
+                            'action': 'Scene in progress...',
+                            'mood': 'Dramatic',
+                            'lighting': 'Natural lighting',
+                            'camera_notes': 'Standard framing'
+                        }],
+                        'characters': [],
+                        'themes': [genre],
+                        'tone': genre,
+                        'pacing': 'Medium'
+                    }
+                    
+            except (json.JSONDecodeError, KeyError, IndexError) as e:
+                print(f"❌ Error parsing Groq screenplay response: {e}")
+                print(f"Raw content preview: {content[:500] if 'content' in locals() else 'No content'}")
+                
+                # Return a minimal valid structure instead of None
+                return {
+                    'synopsis': synopsis[:200],
+                    'scenes': [{
+                        'heading': 'INT. LOCATION - DAY',
+                        'description': synopsis[:200],
+                        'dialogue': [],
+                        'action': 'Scene description unavailable. Please regenerate.',
+                        'mood': 'Neutral',
+                        'lighting': 'Standard lighting',
+                        'camera_notes': 'Medium shot'
+                    }],
+                    'characters': [],
+                    'themes': [genre],
+                    'tone': genre,
+                    'pacing': 'Medium'
+                }
         
-        return None
+        print(f"❌ No valid result from Groq API")
+        # Return minimal structure instead of None to prevent complete failure
+        return {
+            'synopsis': synopsis[:200],
+            'scenes': [{
+                'heading': 'INT. LOCATION - DAY',
+                'description': synopsis[:200],
+                'dialogue': [],
+                'action': 'Script generation failed. Please try again.',
+                'mood': 'Neutral',
+                'lighting': 'Standard lighting',
+                'camera_notes': 'Medium shot'
+            }],
+            'characters': [],
+            'themes': [genre],
+            'tone': genre,
+            'pacing': 'Medium'
+        }
     
     def generate_scene_description(self, scene_text: str) -> Optional[str]:
         """Generate detailed scene description"""

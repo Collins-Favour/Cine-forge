@@ -68,7 +68,7 @@ class Config:
     MAX_ITEMS_PER_PAGE = 100
     
     # AI Processing Limits
-    MAX_FREE_PROJECTS = 3
+    MAX_FREE_PROJECTS = 999  # Unlimited projects for all users
     MAX_SCENES_PER_PROJECT = 100
     MAX_PANELS_PER_SCENE = 10
     AI_GENERATION_TIMEOUT = 60  # seconds

@@ -102,7 +102,6 @@ export default function UserDetail() {
 
   const user = userData?.data?.user
   const stats = userData?.data?.stats
-  const projects = userData?.data?.projects || []
   const activity = userData?.data?.recent_activity || []
 
   return (
@@ -303,49 +302,13 @@ export default function UserDetail() {
       </div>
 
       {/* Stats */}
-      <div className="grid md:grid-cols-3 gap-6 mb-6">
+      <div className="grid md:grid-cols-1 gap-6 mb-6">
         <StatCard
-          icon={<FolderOpen className="w-6 h-6" />}
-          label="Projects"
-          value={stats?.projects_count || 0}
+          icon={<Activity className="w-6 h-6" />}
+          label="Recent Activities"
+          value={stats?.activity_count || 0}
           color="primary-500"
         />
-        <StatCard
-          icon={<User className="w-6 h-6" />}
-          label="Collaborations"
-          value={stats?.collaborations_count || 0}
-          color="accent-purple"
-        />
-        <StatCard
-          icon={<MessageSquare className="w-6 h-6" />}
-          label="Messages"
-          value={stats?.messages_count || 0}
-          color="accent-green"
-        />
-      </div>
-
-      {/* Recent Projects */}
-      <div className="card mb-6">
-        <h3 className="text-xl font-bold text-dark-900 mb-4">Recent Projects</h3>
-        {projects.length === 0 ? (
-          <p className="text-dark-600 text-center py-8">No projects yet</p>
-        ) : (
-          <div className="space-y-3">
-            {projects.map((project) => (
-              <div key={project.project_id} className="p-4 bg-dark-100 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium text-dark-900">{project.project_name}</div>
-                    <div className="text-sm text-dark-600">
-                      Created {new Date(project.created_at).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <button className="btn-secondary text-sm">View</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Recent Activity */}

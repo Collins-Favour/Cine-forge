@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Save, User, Lock, Bell, Eye, EyeOff, Camera } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Save, User, Lock, Bell, Eye, EyeOff, Camera, ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '@store/authStore'
 import { usersApi } from '@services/apiServices'
 import { SuccessModal, ErrorModal } from '@components/Modal'
@@ -8,6 +9,7 @@ import api from '@services/api'
 
 export default function Settings() {
   const { user, updateUser } = useAuthStore()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('profile')
   const [showCurrentPassword, setShowCurrentPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
@@ -225,9 +227,18 @@ export default function Settings() {
 
   return (
     <div className="max-w-5xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-display font-bold text-dark-900 mb-2">Settings</h1>
-        <p className="text-dark-600">Manage your account settings and preferences</p>
+      <div className="mb-8 flex items-center gap-4">
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="btn-secondary flex items-center gap-2 px-3 py-2"
+          title="Back to Dashboard"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div>
+          <h1 className="text-3xl font-display font-bold text-dark-900 mb-2">Settings</h1>
+          <p className="text-dark-600">Manage your account settings and preferences</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

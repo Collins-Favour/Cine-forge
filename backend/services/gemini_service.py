@@ -3,7 +3,12 @@ Gemini AI Service for Image Generation
 """
 import os
 import google.generativeai as genai
+import requests
+import base64
+from io import BytesIO
+from PIL import Image
 from typing import Optional, Dict, Any
+import time
 
 
 class GeminiService:
@@ -18,35 +23,118 @@ class GeminiService:
         genai.configure(api_key=self.api_key)
         self.model = genai.GenerativeModel('gemini-pro')
         self.vision_model = genai.GenerativeModel('gemini-pro-vision')
+        
+        # Imagen 3 API endpoint
+        self.imagen_url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict"
     
-    def generate_storyboard_prompt(self, scene_description: str, style: str = "cinematic") -> Optional[str]:
-        """Generate optimized image generation prompt from scene description"""
-        prompt = f"""Convert this scene description into a detailed visual prompt for image generation.
-Include:
-- Camera angle and framing
-- Lighting conditions
-- Color palette
-- Mood and atmosphere
-- Specific visual elements
-- Art style: {style}
-
-Scene: {scene_description}
-
-Generate a single, detailed prompt suitable for image generation AI."""
+    def generate_storyboard_from_project(self, title: str, genre: str, logline: str, synopsis: str) -> Optional[str]:
+        """Generate storyboard image prompt directly from project information (intelligent mode)"""
+        
+        # Load prompt template from file
+        import os
+        prompt_file = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'direct_storyboard_generation.txt')
         
         try:
-            print(f"Calling Gemini API for scene: {scene_description[:50]}...")
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            print("✅ Loaded direct storyboard generation prompt from file")
+        except Exception as e:
+            print(f"⚠️ Could not load prompt file: {e}, using fallback")
+            # Fallback prompt
+            prompt_template = """Create a cinematic opening shot for:
+
+Title: {title}
+Genre: {genre}
+Logline: {logline}
+Synopsis: {synopsis}
+
+Generate a detailed visual prompt for image generation that captures the story's essence."""
+        
+        # Fill in template variables
+        prompt = prompt_template.format(
+            title=title,
+            genre=genre or 'cinematic film',
+            logline=logline or 'Not provided',
+            synopsis=synopsis or 'Not provided'
+        )
+        
+        print("\n" + "="*80)
+        print("🎬 INTELLIGENT STORYBOARD GENERATION (Direct from Project)")
+        print("="*80)
+        print(prompt)
+        print("="*80 + "\n")
+        
+        try:
+            print(f"🧠 Calling Gemini Pro with intelligent project analysis...")
             response = self.model.generate_content(prompt)
             
             if response and response.text:
-                print(f"Gemini API returned prompt: {response.text[:100]}...")
+                print("\n" + "="*80)
+                print("✅ GEMINI GENERATED IMAGE PROMPT (Intelligent Mode)")
+                print("="*80)
+                print(response.text)
+                print("="*80 + "\n")
                 return response.text
             else:
-                print(f"Gemini API returned empty response")
+                print(f"❌ Gemini API returned empty response")
                 return None
                 
         except Exception as e:
-            print(f"Gemini error generating prompt: {e}")
+            print(f"❌ Gemini error generating prompt: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def generate_storyboard_prompt(self, scene_description: str, style: str = "cinematic") -> Optional[str]:
+        """Generate optimized image generation prompt from scene description"""
+        
+        # Load prompt template from file
+        import os
+        prompt_file = os.path.join(os.path.dirname(__file__), '..', 'prompts', 'storyboard_prompt_generation.txt')
+        
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            print("✅ Loaded storyboard prompt template from file")
+        except Exception as e:
+            print(f"⚠️ Could not load prompt file: {e}, using fallback")
+            # Fallback prompt
+            prompt_template = """Convert this scene description into a detailed visual prompt for image generation.
+
+Scene: {scene_description}
+Style: {style}
+
+Generate a single, detailed prompt suitable for image generation AI."""
+        
+        # Fill in template variables
+        prompt = prompt_template.format(
+            scene_description=scene_description,
+            style=style
+        )
+        
+        print("\n" + "="*80)
+        print("🎨 FULL STORYBOARD PROMPT GENERATION REQUEST")
+        print("="*80)
+        print(prompt)
+        print("="*80 + "\n")
+        
+        try:
+            print(f"📞 Calling Gemini Pro to generate storyboard prompt...")
+            response = self.model.generate_content(prompt)
+            
+            if response and response.text:
+                print("\n" + "="*80)
+                print("✅ GEMINI GENERATED STORYBOARD PROMPT")
+                print("="*80)
+                print(response.text)
+                print("="*80 + "\n")
+                return response.text
+            else:
+                print(f"❌ Gemini API returned empty response")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Gemini error generating prompt: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -112,3 +200,120 @@ Context: {context}"""
         except Exception as e:
             print(f"Gemini error generating character: {e}")
             return None
+    
+    def generate_image(self, prompt: str, negative_prompt: str = "", retries: int = 3) -> Optional[str]:
+        """
+        Generate image using Google Imagen 3
+        Returns base64 encoded image or None if failed
+        """
+        # Build the request payload for Imagen
+        payload = {
+            "instances": [
+                {
+                    "prompt": prompt
+                }
+            ],
+            "parameters": {
+                "sampleCount": 1,
+                "aspectRatio": "16:9",
+                "safetyFilterLevel": "block_some",
+                "personGeneration": "allow_adult"
+            }
+        }
+        
+        if negative_prompt:
+            payload["parameters"]["negativePrompt"] = negative_prompt
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        for attempt in range(retries):
+            try:
+                print(f"🎨 Generating image with Gemini Imagen 3 (attempt {attempt + 1}/{retries})...")
+                print(f"   📝 IMAGE PROMPT:")
+                print(f"   {prompt}")
+                print(f"   ---")
+                if negative_prompt:
+                    print(f"   🚫 Negative prompt: {negative_prompt}")
+                
+                print(f"   📤 Sending request to Imagen API...")
+                response = requests.post(
+                    self.imagen_url,
+                    params={"key": self.api_key},
+                    headers=headers,
+                    json=payload,
+                    timeout=120
+                )
+                
+                print(f"   📥 Response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    # Extract image data from response
+                    if "predictions" in result and len(result["predictions"]) > 0:
+                        prediction = result["predictions"][0]
+                        
+                        # Imagen returns base64 encoded images
+                        if "bytesBase64Encoded" in prediction:
+                            base64_image = prediction["bytesBase64Encoded"]
+                            
+                            # Verify it's a valid image
+                            try:
+                                image_bytes = base64.b64decode(base64_image)
+                                img = Image.open(BytesIO(image_bytes))
+                                img.verify()
+                                
+                                # Reopen and convert to RGB if needed
+                                img = Image.open(BytesIO(image_bytes))
+                                if img.mode != 'RGB':
+                                    img = img.convert('RGB')
+                                
+                                # Convert to PNG for consistency
+                                buffer = BytesIO()
+                                img.save(buffer, format='PNG', quality=95)
+                                buffer.seek(0)
+                                
+                                base64_png = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                                print(f"✅ Image generated successfully with Gemini Imagen 3!")
+                                
+                                return f"data:image/png;base64,{base64_png}"
+                            
+                            except Exception as img_error:
+                                print(f"❌ Invalid image received: {img_error}")
+                                if attempt < retries - 1:
+                                    time.sleep(5)
+                                    continue
+                    
+                    print(f"❌ No image data in response: {result}")
+                    if attempt < retries - 1:
+                        time.sleep(5)
+                        continue
+                
+                else:
+                    error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
+                    print(f"❌ Image generation failed: {response.status_code}")
+                    print(f"   Error: {error_data}")
+                    
+                    if attempt < retries - 1:
+                        print(f"   Retrying in 10 seconds...")
+                        time.sleep(10)
+                        continue
+                
+            except requests.exceptions.Timeout:
+                print(f"⏱️ Request timeout (attempt {attempt + 1}/{retries})")
+                if attempt < retries - 1:
+                    time.sleep(10)
+                    continue
+            
+            except Exception as e:
+                print(f"❌ Error generating image: {e}")
+                import traceback
+                traceback.print_exc()
+                if attempt < retries - 1:
+                    time.sleep(10)
+                    continue
+        
+        print(f"❌ Failed to generate image after {retries} attempts")
+        return None

@@ -13,6 +13,8 @@ import { motion } from 'framer-motion'
 import { Film, Sparkles, Zap, ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
+console.log('Landing.jsx loaded')
+
 function AnimatedSphere({ position, color, speed = 1 }) {
   const meshRef = useRef()
   
@@ -55,11 +57,16 @@ function Scene() {
 }
 
 export default function LandingPage() {
+  console.log('LandingPage rendering')
+  
   return (
     <div className="relative min-h-screen bg-dark-50 overflow-hidden">
       {/* 3D Background */}
       <div className="fixed inset-0 z-0">
-        <Canvas>
+        <Canvas 
+          fallback={<div className="w-full h-full bg-gradient-to-br from-primary-500/10 via-accent-purple/10 to-accent-pink/10" />}
+          onCreated={() => console.log('Canvas created successfully')}
+        >
           <Scene />
         </Canvas>
       </div>

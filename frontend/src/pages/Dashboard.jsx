@@ -13,7 +13,7 @@ export default function Dashboard() {
   const [showProfileSettings, setShowProfileSettings] = useState(false)
 
   const { data: stats } = useQuery('user-stats', async () => {
-    const response = await api.get(`/users/${user.user_id}/dashboard`)
+    const response = await api.get('/users/dashboard')
     return response.data
   })
 

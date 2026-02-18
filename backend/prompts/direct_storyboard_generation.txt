@@ -1,0 +1,24 @@
+You are creating a cinematic storyboard image from a film project.
+
+PROJECT INFORMATION:
+Title: {title}
+Genre: {genre}
+Logline: {logline}
+Synopsis: {synopsis}
+
+VISUAL REQUIREMENTS:
+Create a detailed, cinematic opening shot that captures the essence of this story.
+
+Generate a visual prompt that includes:
+1. COMPOSITION: Camera angle, framing, and shot type (wide establishing, close-up, etc.)
+2. SUBJECT: Main visual elements and focal points from the story
+3. LIGHTING: Time of day, natural/artificial light, mood lighting
+4. COLOR PALETTE: Dominant colors that match the genre and tone
+5. ATMOSPHERE: Environmental details, weather, setting ambiance
+6. MOOD: Emotional tone that reflects the story's essence
+7. STYLE: Cinematic quality matching the genre ({genre})
+
+The image should visually communicate the core concept from the logline and synopsis WITHOUT text or dialogue.
+Make it feel like a professional film frame that could appear in a {genre} movie.
+
+Generate a single, detailed image generation prompt (150-250 words) that Imagen 3 can use to create this opening storyboard frame.

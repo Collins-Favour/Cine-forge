@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useQuery } from 'react-query'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { TrendingUp, Users, FolderOpen, MessageSquare, Calendar, BarChart3, Activity, Download } from 'lucide-react'
+import { TrendingUp, Users, FolderOpen, MessageSquare, Calendar, BarChart3, Activity, Download, ArrowLeft } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import { adminApi } from '@services/apiServices'
 
 export default function Analytics() {
+  const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState(30)
 
   const { data: analyticsData, isLoading } = useQuery(
@@ -15,9 +17,7 @@ export default function Analytics() {
 
   const analytics = analyticsData?.data || {}
   const newUsers = analytics.new_users || []
-  const newProjects = analytics.new_projects || []
   const messages = analytics.messages || []
-  const topCreators = analytics.top_creators || []
 
   const COLORS = ['#8B5CF6', '#EC4899', '#10B981', '#F59E0B', '#3B82F6']
 
@@ -65,20 +65,13 @@ export default function Analytics() {
       ) : (
         <>
           {/* Key Metrics */}
-          <div className="grid md:grid-cols-4 gap-6 mb-8">
+          <div className="grid md:grid-cols-3 gap-6 mb-8">
             <MetricCard
               icon={<Users className="w-6 h-6" />}
               label="Total New Users"
               value={newUsers.reduce((sum, item) => sum + item.count, 0)}
               change="+12%"
               color="primary-500"
-            />
-            <MetricCard
-              icon={<FolderOpen className="w-6 h-6" />}
-              label="New Projects"
-              value={newProjects.reduce((sum, item) => sum + item.count, 0)}
-              change="+8%"
-              color="accent-purple"
             />
             <MetricCard
               icon={<MessageSquare className="w-6 h-6" />}
@@ -96,7 +89,7 @@ export default function Analytics() {
             />
           </div>
 
-          {/* Charts Row 1 */}
+          {/* Charts */}
           <div className="grid md:grid-cols-2 gap-6 mb-6">
             {/* New Users Chart */}
             <ChartCard title="New Users" icon={<Users className="w-5 h-5" />}>
@@ -119,24 +112,6 @@ export default function Analytics() {
               </ResponsiveContainer>
             </ChartCard>
 
-            {/* New Projects Chart */}
-            <ChartCard title="New Projects" icon={<FolderOpen className="w-5 h-5" />}>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={newProjects}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                  <XAxis dataKey="date" stroke="#6B7280" fontSize={12} />
-                  <YAxis stroke="#6B7280" fontSize={12} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#FFFFFF', border: '1px solid #E5E7EB' }}
-                  />
-                  <Bar dataKey="count" fill="#EC4899" radius={[8, 8, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </ChartCard>
-          </div>
-
-          {/* Charts Row 2 */}
-          <div className="grid md:grid-cols-2 gap-6 mb-6">
             {/* Messages Chart */}
             <ChartCard title="Message Activity" icon={<MessageSquare className="w-5 h-5" />}>
               <ResponsiveContainer width="100%" height={300}>
@@ -156,33 +131,6 @@ export default function Analytics() {
                   />
                 </LineChart>
               </ResponsiveContainer>
-            </ChartCard>
-
-            {/* Top Creators */}
-            <ChartCard title="Top Project Creators" icon={<TrendingUp className="w-5 h-5" />}>
-              <div className="space-y-4 pt-4">
-                {topCreators.slice(0, 6).map((creator, index) => (
-                  <div key={creator.user_id} className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-primary-500 flex items-center justify-center text-white font-semibold text-sm">
-                        {index + 1}
-                      </div>
-                      <div>
-                        <div className="font-medium text-dark-900">{creator.username}</div>
-                        <div className="text-xs text-dark-600">{creator.projects} projects</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-24 h-2 bg-dark-200 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-gradient-to-r from-primary-500 to-accent-purple"
-                          style={{ width: `${Math.min(100, (creator.projects / topCreators[0].projects) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </ChartCard>
           </div>
 

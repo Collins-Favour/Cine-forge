@@ -217,12 +217,14 @@ def remove_reaction(message_id, reaction_id):
 @jwt_required()
 def get_notifications():
     """Get user notifications"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     unread_only = request.args.get('unread_only', 'false').lower() == 'true'
     
-    query = Notification.query.filter_by(user_id=user_id)
+    print(f"📬 Fetching notifications for user_id: {user_id}")
+    
+    query = Notification.query.filter(Notification.user_id == user_id)
     
     if unread_only:
         query = query.filter_by(is_read=False)
@@ -269,3 +271,69 @@ def mark_all_notifications_read():
     db.session.commit()
     
     return jsonify({'message': 'All notifications marked as read'}), 200
+
+
+@collaboration_bp.route('/project/<int:project_id>/upload-file', methods=['POST'])
+@jwt_required()
+@project_permission_required('viewer')
+def upload_file(project_id):
+    """Upload file for C-Space messages"""
+    import os
+    from werkzeug.utils import secure_filename
+    from config import Config
+    
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Validate file size (10MB max)
+    file.seek(0, os.SEEK_END)
+    file_size = file.tell()
+    file.seek(0)  # Reset file pointer
+    
+    if file_size > 10 * 1024 * 1024:  # 10MB
+        return jsonify({'error': 'File size must be less than 10MB'}), 400
+    
+    # Allowed file extensions
+    allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'doc', 'docx', 'txt', 'mp4', 'mov', 'avi', 'mp3', 'wav'}
+    
+    filename = secure_filename(file.filename)
+    file_ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+    
+    if file_ext not in allowed_extensions:
+        return jsonify({'error': f'File type .{file_ext} not allowed. Allowed types: {', '.join(allowed_extensions)}'}), 400
+    
+    # Create unique filename
+    user_id = get_jwt_identity()
+    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    unique_filename = f"project_{project_id}_user_{user_id}_{timestamp}_{filename}"
+    
+    # Ensure upload directory exists
+    upload_folder = os.path.join(Config.UPLOAD_FOLDER, 'cspace', str(project_id))
+    os.makedirs(upload_folder, exist_ok=True)
+    
+    file_path = os.path.join(upload_folder, unique_filename)
+    file.save(file_path)
+    
+    # Generate URL (relative path)
+    file_url = f"/uploads/cspace/{project_id}/{unique_filename}"
+    
+    # Generate thumbnail for images
+    thumbnail_url = None
+    image_extensions = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
+    if file_ext in image_extensions:
+        thumbnail_url = file_url  # For now, use same URL; could generate actual thumbnail
+    
+    return jsonify({
+        'message': 'File uploaded successfully',
+        'file_url': file_url,
+        'thumbnail_url': thumbnail_url,
+        'filename': unique_filename,
+        'original_filename': filename,
+        'file_size': file_size,
+        'file_type': file_ext
+    }), 200

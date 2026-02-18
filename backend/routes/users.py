@@ -98,29 +98,41 @@ def change_password():
 
 
 @users_bp.route('/dashboard', methods=['GET'])
-@users_bp.route('/<int:user_id>/dashboard', methods=['GET'])
 @jwt_required()
-def get_dashboard(user_id=None):
+def get_dashboard():
     """Get user dashboard statistics"""
     current_user_id = int(get_jwt_identity())
     
-    # Use provided user_id or current user
-    target_user_id = user_id if user_id else current_user_id
+    # Always use the authenticated user's ID - no access to other users' dashboards
+    target_user_id = current_user_id
     
     # Get all projects user has access to (via collaborations)
     from models import ProjectCollaborator
     
-    # Get all project IDs user is collaborating on (includes owned projects since owners are auto-added as collaborators)
-    collaborated_project_ids = [pc.project_id for pc in ProjectCollaborator.query.filter_by(
-        user_id=target_user_id,
-        invitation_status='accepted'
-    ).all()]
+    print(f"📊 Getting dashboard for user_id: {target_user_id}")
     
-    # Get all projects (deduplicated)
+    # Get all project IDs user is collaborating on (includes owned projects since owners are auto-added as collaborators)
+    collaborator_records = ProjectCollaborator.query.filter(
+        ProjectCollaborator.user_id == target_user_id,
+        ProjectCollaborator.invitation_status == 'accepted'
+    ).all()
+    
+    collaborated_project_ids = [pc.project_id for pc in collaborator_records]
+    print(f"   Found {len(collaborator_records)} collaborator records for user {target_user_id}")
+    for record in collaborator_records:
+        print(f"     - Project ID: {record.project_id}, Role: {record.role}, Status: {record.invitation_status}")
+    
+    # Get all projects (deduplicated) - filter out archived
     all_projects = Project.query.filter(
-        Project.project_id.in_(collaborated_project_ids),
-        Project.is_archived == False
+        Project.project_id.in_(collaborated_project_ids)
+    ).filter(
+        db.or_(Project.is_archived == False, Project.is_archived == None)
     ).all() if collaborated_project_ids else []
+    
+    print(f"   Found {len(all_projects)} projects after filtering")
+    if all_projects:
+        print(f"   Project IDs: {[p.project_id for p in all_projects]}")
+        print(f"   Project Titles: {[p.title for p in all_projects]}")
     
     total_projects = len(all_projects)
     

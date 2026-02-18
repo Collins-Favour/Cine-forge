@@ -1,0 +1,19 @@
+# Ignore files with specific Tailwind/syntax requirements
+frontend/src/index.css
+frontend/src/services/socketService.js
+**/index.css
+**/socketService.js
+
+# Build outputs
+**/node_modules
+**/dist
+**/build
+**/.next
+
+# Environment files
+.env
+.env.*
+
+# Dependencies
+package-lock.json
+yarn.lock

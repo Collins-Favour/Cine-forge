@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { 
   Save, Download, Share2, Sparkles, Eye, FileText, ChevronDown, Users, History, Clock, X,
   Undo, Redo, Search, Replace, Lock, Unlock, ZoomIn, ZoomOut, Moon, Sun,
-  Copy, Printer, Settings, BookOpen, Film, MessageSquare, AlignLeft, Type
+  Copy, Printer, Settings, BookOpen, Film, MessageSquare, AlignLeft, Type, ArrowLeft
 } from 'lucide-react'
 import { scriptsApi } from '@services/apiServices'
 import { SuccessModal, ErrorModal, PromptModal, ConfirmModal } from '@components/Modal'
@@ -638,6 +638,13 @@ export default function ScriptEditor() {
 
               {/* Formatting Buttons Row */}
               <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => navigate(`/projects/${id}`)}
+                  className="btn-secondary flex items-center gap-2 px-3 py-1.5"
+                  title="Back to Project"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
                 <span className="text-sm font-medium text-dark-700">Format:</span>
                 {formatButtons.map((btn) => (
                   <button

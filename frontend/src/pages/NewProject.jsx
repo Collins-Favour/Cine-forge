@@ -51,17 +51,27 @@ export default function NewProject() {
       setLoading(true)
       setError(null)
       
+      console.log('📤 Creating project with data:', formData)
+      
       const response = await projectsApi.createProject({
         ...formData,
         target_length: formData.target_length ? parseInt(formData.target_length) : null
       })
       
+      console.log('✅ Project created successfully:', response.data)
+      
       // Navigate to the new project
       const projectId = response.data.project.project_id
       navigate(`/projects/${projectId}`)
     } catch (err) {
-      console.error('Error creating project:', err)
-      setError(err.response?.data?.error || 'Failed to create project')
+      console.error('❌ Error creating project:', err)
+      console.error('Error response:', err.response?.data)
+      
+      const errorMessage = err.response?.data?.error || 
+                          err.response?.data?.message || 
+                          err.message || 
+                          'Failed to create project. Please try again.'
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }

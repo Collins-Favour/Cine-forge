@@ -5,6 +5,7 @@ Handles admin dashboard, user management, system settings, and analytics
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, User, Project, CSpaceMessage, ActivityLog, UsageAnalytics
+from models.system import SystemSetting
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 
@@ -332,8 +333,20 @@ def get_all_projects():
         page=page, per_page=per_page, error_out=False
     )
     
+    # Include creator info for each project
+    projects_data = []
+    for p in pagination.items:
+        project_dict = p.to_dict()
+        creator = User.query.get(p.created_by)
+        project_dict['creator'] = {
+            'user_id': creator.user_id,
+            'username': creator.username,
+            'email': creator.email
+        } if creator else None
+        projects_data.append(project_dict)
+    
     return jsonify({
-        'projects': [p.to_dict() for p in pagination.items],
+        'projects': projects_data,
         'total': pagination.total,
         'page': page,
         'pages': pagination.pages
@@ -471,19 +484,30 @@ def get_system_settings():
     if not admin_user:
         return jsonify({'error': 'Admin access required'}), 403
     
-    # Return mock settings for now
-    return jsonify({
-        'settings': {
-            'site_name': 'CineForge AI',
-            'maintenance_mode': False,
-            'allow_registration': True,
-            'require_email_verification': True,
-            'max_file_size': 100,  # MB
-            'max_storage_per_user': 5000,  # MB
-            'ai_features_enabled': True,
-            'collaboration_enabled': True
-        }
-    }), 200
+    # Get all settings from database
+    settings = {}
+    db_settings = SystemSetting.query.all()
+    
+    for setting in db_settings:
+        settings[setting.setting_key] = setting.get_value()
+    
+    # Set defaults if not in database
+    defaults = {
+        'site_name': 'CineForge AI',
+        'maintenance_mode': False,
+        'allow_registration': True,
+        'require_email_verification': True,
+        'max_file_size': 100,
+        'max_storage_per_user': 5000,
+        'ai_features_enabled': True,
+        'collaboration_enabled': True
+    }
+    
+    for key, default_value in defaults.items():
+        if key not in settings:
+            settings[key] = default_value
+    
+    return jsonify({'settings': settings}), 200
 
 
 @admin_bp.route('/settings', methods=['PUT'])
@@ -496,8 +520,34 @@ def update_system_settings():
     
     data = request.get_json()
     
-    # In production, save to database or config file
-    # For now, just return success
+    # Update each setting in database
+    for key, value in data.items():
+        # Determine type
+        if isinstance(value, bool):
+            setting_type = 'boolean'
+            str_value = 'true' if value else 'false'
+        elif isinstance(value, (int, float)):
+            setting_type = 'number'
+            str_value = str(value)
+        else:
+            setting_type = 'string'
+            str_value = str(value)
+        
+        # Update or create setting
+        setting = SystemSetting.query.filter_by(setting_key=key).first()
+        if setting:
+            setting.setting_value = str_value
+            setting.setting_type = setting_type
+            setting.updated_at = datetime.utcnow()
+        else:
+            setting = SystemSetting(
+                setting_key=key,
+                setting_value=str_value,
+                setting_type=setting_type
+            )
+            db.session.add(setting)
+    
+    db.session.commit()
     
     return jsonify({
         'message': 'Settings updated successfully',

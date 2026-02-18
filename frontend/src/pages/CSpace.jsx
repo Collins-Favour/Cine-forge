@@ -1,22 +1,32 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { Send, Paperclip, Smile, Search, Users, Hash, MoreVertical, Video, Phone, Mail, MessageSquare } from 'lucide-react'
+import { Send, Paperclip, Smile, Search, Users, Hash, MoreVertical, Mail, MessageSquare, ArrowLeft, Settings, FileText, File, Download } from 'lucide-react'
 import { useAuthStore } from '@store/authStore'
 import { cspaceApi, projectsApi } from '@services/apiServices'
 import { SuccessModal, ErrorModal } from '@components/Modal'
 import Modal from '@components/Modal'
+import socketService from '@services/socketService'
+import CSpaceInbox from '../components/CSpaceInbox'
 
 export default function CSpace() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { user } = useAuthStore()
+  
+  console.log('CSpace rendering, project id:', id)
+  
   const [selectedChannel, setSelectedChannel] = useState('general')
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState([])
   const [collaborators, setCollaborators] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
   const [showUserProfile, setShowUserProfile] = useState(false)
+  const [typingUsers, setTypingUsers] = useState([])
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  const [attachedFile, setAttachedFile] = useState(null)
   const messagesEndRef = useRef(null)
+  const typingTimeoutRef = useRef(null)
+  const fileInputRef = useRef(null)
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [hasError, setHasError] = useState(false)
@@ -26,22 +36,12 @@ export default function CSpace() {
   const [showErrorModal, setShowErrorModal] = useState(false)
   const [modalTitle, setModalTitle] = useState('')
   const [modalMessage, setModalMessage] = useState('')
+  const [currentProject, setCurrentProject] = useState(null)
 
   useEffect(() => {
-    // If no project ID, show general workspace
+    // If no project ID, inbox view will be shown - no need to set loading or messages
     if (!id) {
       setLoading(false)
-      // Mock some demo data for general workspace
-      setMessages([
-        {
-          id: 1,
-          user: { name: 'System', avatar: null },
-          content: 'Welcome to CineForge AI Collaboration Space! Select a project from the Projects page to start collaborating with your team.',
-          timestamp: new Date(),
-          type: 'text',
-          isEdited: false
-        }
-      ])
       return
     }
     fetchData()
@@ -49,8 +49,19 @@ export default function CSpace() {
 
   const fetchData = async () => {
     setLoading(true)
-    await Promise.all([fetchMessages(), fetchCollaborators()])
+    await Promise.all([fetchMessages(), fetchCollaborators(), fetchCurrentProject()])
     setLoading(false)
+  }
+
+  const fetchCurrentProject = async () => {
+    if (!id) return
+    
+    try {
+      const response = await projectsApi.getProject(id)
+      setCurrentProject(response.data)
+    } catch (err) {
+      console.error('Error fetching current project:', err)
+    }
   }
 
   const fetchMessages = async () => {
@@ -71,6 +82,9 @@ export default function CSpace() {
           content: msg.message_content,
           timestamp: new Date(msg.sent_at),
           type: msg.message_type,
+          message_type: msg.message_type,
+          attached_file_url: msg.attached_file_url,
+          attached_thumbnail: msg.attached_thumbnail,
           isEdited: msg.is_edited,
           reactions: msg.reactions_count || 0
         }
@@ -137,16 +151,140 @@ export default function CSpace() {
     scrollToBottom()
   }, [messages])
 
+  // SocketIO real-time connection
+  useEffect(() => {
+    if (!id) return
+
+    // Connect to socket
+    socketService.connect()
+
+    // Join the project room
+    socketService.joinProject(id)
+
+    // Listen for new messages
+    const handleNewMessage = (data) => {
+      console.log('Received new message:', data)
+      
+      // Transform incoming socket message to UI format
+      const u = data.user || {}
+      const displayName = u.username || (u.first_name && u.last_name ? `${u.first_name} ${u.last_name}` : 'Unknown User')
+      
+      const newMsg = {
+        id: data.message.message_id,
+        user: { 
+          name: displayName, 
+          avatar: u.profile_pic_url || null, 
+          user_id: u.user_id 
+        },
+        content: data.message.message_content,
+        timestamp: new Date(data.message.sent_at),
+        type: data.message.message_type,
+        message_type: data.message.message_type,
+        attached_file_url: data.message.attached_file_url,
+        attached_thumbnail: data.message.attached_thumbnail,
+        isEdited: false,
+        reactions: 0
+      }
+
+      // Only add if it's not from current user (to avoid duplicates from optimistic updates)
+      setMessages(prev => {
+        // Check if message already exists
+        const exists = prev.some(msg => msg.id === newMsg.id)
+        if (exists) return prev
+        return [...prev, newMsg]
+      })
+    }
+
+    // Listen for typing indicators
+    const handleUserTyping = (data) => {
+      const typingUserName = data.username || 'Someone'
+      setTypingUsers(prev => {
+        if (!prev.includes(typingUserName)) {
+          return [...prev, typingUserName]
+        }
+        return prev
+      })
+    }
+
+    const handleUserStoppedTyping = (data) => {
+      const typingUserName = data.username || 'Someone'
+      setTypingUsers(prev => prev.filter(name => name !== typingUserName))
+    }
+
+    socketService.on('new_message', handleNewMessage)
+    socketService.on('user_typing', handleUserTyping)
+    socketService.on('user_stopped_typing', handleUserStoppedTyping)
+
+    // Cleanup on unmount
+    return () => {
+      socketService.off('new_message', handleNewMessage)
+      socketService.off('user_typing', handleUserTyping)
+      socketService.off('user_stopped_typing', handleUserStoppedTyping)
+      socketService.leaveProject(id)
+    }
+  }, [id])
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  const handleTyping = () => {
+    if (!id) return
+    
+    // Emit typing event
+    socketService.sendTyping(id, true)
+
+    // Clear previous timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+
+    // Set new timeout to send stop typing after 2 seconds of inactivity
+    typingTimeoutRef.current = setTimeout(() => {
+      socketService.sendTyping(id, false)
+    }, 2000)
+  }
+
+  const handleEmojiSelect = (emoji) => {
+    setMessage(prev => prev + emoji)
+    setShowEmojiPicker(false)
+  }
+
+  const handleFileAttach = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file size (10MB max)
+    if (file.size > 10 * 1024 * 1024) {
+      setModalTitle('File Too Large')
+      setModalMessage('File size must be less than 10MB')
+      setShowErrorModal(true)
+      return
+    }
+
+    setAttachedFile(file)
+  }
+
+  const removeAttachment = () => {
+    setAttachedFile(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
   const handleSendMessage = async (e) => {
     e.preventDefault()
-    if (!message.trim() || sending) return
+    if ((!message.trim() && !attachedFile) || sending) return
 
     const messageContent = message
+    const fileToSend = attachedFile
     setMessage('') // Clear input immediately
+    setAttachedFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
     setSending(true)
 
     const newMessage = {
@@ -169,11 +307,43 @@ export default function CSpace() {
       if (!id) {
         throw new Error('Please select a project to send messages')
       }
+
+      let attachedFileUrl = null
+      let attachedThumbnail = null
+
+      // Upload file if attached
+      if (fileToSend) {
+        try {
+          const formData = new FormData()
+          formData.append('file', fileToSend)
+          formData.append('project_id', id)
+          
+          const uploadResponse = await cspaceApi.uploadFile(formData)
+          attachedFileUrl = uploadResponse.data.file_url
+          attachedThumbnail = uploadResponse.data.thumbnail_url
+        } catch (uploadErr) {
+          console.error('File upload failed:', uploadErr)
+          setModalTitle('Upload Failed')
+          setModalMessage('Failed to upload file. Sending message without attachment.')
+          setShowErrorModal(true)
+        }
+      }
       
       const response = await cspaceApi.sendMessage(id, {
-        message_content: messageContent,
-        message_type: 'text',
-        channel: selectedChannel
+        message_content: messageContent || '📎 Attachment',
+        message_type: attachedFileUrl ? 'file' : 'text',
+        channel: selectedChannel,
+        attached_file_url: attachedFileUrl,
+        attached_thumbnail: attachedThumbnail
+      })
+
+      // Emit via SocketIO for real-time broadcasting
+      socketService.sendMessage(id, {
+        message_content: messageContent || '📎 Attachment',
+        message_type: attachedFileUrl ? 'file' : 'text',
+        channel: selectedChannel,
+        attached_file_url: attachedFileUrl,
+        attached_thumbnail: attachedThumbnail
       })
 
       // Update the temporary message with real data from server
@@ -324,8 +494,44 @@ export default function CSpace() {
     )
   }
 
+  // Show inbox view when no project is selected
+  if (!id) {
+    return <CSpaceInbox />
+  }
+
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-6">
+    <div className="flex flex-col h-[calc(100vh-8rem)]">
+      {/* Project Header */}
+      {currentProject && (
+        <div className="card mb-4 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Link 
+                to="/c-space"
+                className="text-dark-500 hover:text-dark-700 transition-colors"
+                title="Back to C-Space Inbox"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+              <div>
+                <h1 className="font-semibold text-lg text-dark-900">{currentProject.title}</h1>
+                <p className="text-sm text-dark-600">{currentProject.production_stage} • {collaborators.length} members</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link 
+                to={`/projects/${id}`}
+                className="text-dark-500 hover:text-dark-700 transition-colors"
+                title="Project Details"
+              >
+                <Settings className="w-5 h-5" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-1 gap-6">
       {/* Channels Sidebar */}
       <div className="w-64 shrink-0 hidden md:block">
         <div className="card h-full flex flex-col">
@@ -382,12 +588,6 @@ export default function CSpace() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="p-2 hover:bg-dark-100 rounded-lg transition-colors" title="Start voice call">
-              <Phone className="w-5 h-5 text-dark-600" />
-            </button>
-            <button className="p-2 hover:bg-dark-100 rounded-lg transition-colors" title="Start video call">
-              <Video className="w-5 h-5 text-dark-600" />
-            </button>
             <button className="p-2 hover:bg-dark-100 rounded-lg transition-colors" title="Search messages">
               <Search className="w-5 h-5 text-dark-600" />
             </button>
@@ -415,20 +615,94 @@ export default function CSpace() {
                     {msg.sending && <span className="text-xs text-dark-400">(sending...)</span>}
                   </div>
                   <p className="text-dark-700 break-words">{msg.content}</p>
+                  
+                  {/* Display attachment if present */}
+                  {msg.attached_file_url && (
+                    <div className="mt-2">
+                      {msg.message_type === 'file' && (msg.attached_file_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) || msg.attached_file_url.startsWith('data:image/')) ? (
+                        <img 
+                          src={msg.attached_file_url.startsWith('/') ? `http://localhost:5000${msg.attached_file_url}` : msg.attached_file_url} 
+                          alt="Attachment" 
+                          className="max-w-sm rounded-lg border border-dark-200 cursor-pointer hover:opacity-90"
+                          onClick={() => window.open(msg.attached_file_url.startsWith('/') ? `http://localhost:5000${msg.attached_file_url}` : msg.attached_file_url, '_blank')}
+                        />
+                      ) : (
+                        <a 
+                          href={msg.attached_file_url.startsWith('/') ? `http://localhost:5000${msg.attached_file_url}` : msg.attached_file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          download
+                          className="inline-flex items-center gap-2 px-3 py-2 bg-dark-50 rounded-lg border border-dark-200 hover:bg-dark-100 transition-colors"
+                        >
+                          {msg.attached_file_url.match(/\.(pdf|doc|docx|txt)$/i) ? (
+                            <FileText className="w-4 h-4 text-primary-600" />
+                          ) : (
+                            <File className="w-4 h-4 text-primary-600" />
+                          )}
+                          <span className="text-sm text-dark-700">
+                            {msg.attached_file_url.split('/').pop() || 'View Attachment'}
+                          </span>
+                          <Download className="w-4 h-4 text-dark-500" />
+                        </a>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))
+          )}
+          {typingUsers.length > 0 && (
+            <div className="flex gap-3 opacity-60">
+              <div className="w-10 h-10 rounded-full bg-dark-300 flex items-center justify-center text-white font-semibold shrink-0">
+                •••
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-dark-600 italic text-sm">
+                  {typingUsers.length === 1 
+                    ? `${typingUsers[0]} is typing...`
+                    : `${typingUsers.slice(0, 2).join(', ')}${typingUsers.length > 2 ? ` and ${typingUsers.length - 2} others` : ''} are typing...`
+                  }
+                </p>
+              </div>
+            </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
         <div className="p-4 border-t border-dark-200">
+          {/* Attached file preview */}
+          {attachedFile && (
+            <div className="mb-3 flex items-center gap-2 p-2 bg-dark-50 rounded-lg border border-dark-200">
+              <Paperclip className="w-4 h-4 text-dark-600" />
+              <span className="text-sm text-dark-700 flex-1 truncate">{attachedFile.name}</span>
+              <span className="text-xs text-dark-500">{(attachedFile.size / 1024).toFixed(1)} KB</span>
+              <button
+                type="button"
+                onClick={removeAttachment}
+                className="text-red-500 hover:text-red-700 text-sm font-medium"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleSendMessage} className="flex items-end gap-2">
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleFileChange}
+              className="hidden"
+              accept="image/*,.pdf,.doc,.docx,.txt,.mp4,.mov,.avi,.mp3,.wav"
+            />
             <div className="flex-1">
               <div className="relative">
                 <textarea
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={(e) => {
+                    setMessage(e.target.value)
+                    handleTyping()
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
@@ -442,18 +716,46 @@ export default function CSpace() {
                   disabled={sending}
                 />
                 <div className="absolute right-2 bottom-2 flex items-center gap-1">
-                  <button type="button" className="p-1.5 hover:bg-dark-100 rounded transition-colors" title="Attach file">
+                  <button 
+                    type="button" 
+                    onClick={handleFileAttach}
+                    className="p-1.5 hover:bg-dark-100 rounded transition-colors" 
+                    title="Attach file"
+                  >
                     <Paperclip className="w-5 h-5 text-dark-500" />
                   </button>
-                  <button type="button" className="p-1.5 hover:bg-dark-100 rounded transition-colors" title="Add emoji">
-                    <Smile className="w-5 h-5 text-dark-500" />
-                  </button>
+                  <div className="relative">
+                    <button 
+                      type="button" 
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      className="p-1.5 hover:bg-dark-100 rounded transition-colors" 
+                      title="Add emoji"
+                    >
+                      <Smile className="w-5 h-5 text-dark-500" />
+                    </button>
+                    
+                    {/* Simple emoji picker */}
+                    {showEmojiPicker && (
+                      <div className="absolute bottom-full right-0 mb-2 bg-white rounded-lg shadow-lg border border-dark-200 p-3 grid grid-cols-8 gap-1 z-10">
+                        {['😀', '😂', '😍', '🤔', '👍', '👎', '🎬', '🎥', '📽️', '🎞️', '✅', '❌', '⭐', '💡', '🔥', '💪', '🙌', '👏', '🎉', '🎊', '💯', '✨', '🚀', '💬', '📝', '📌', '🎯', '💼', '📊', '📈', '⚡', '🔔'].map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => handleEmojiSelect(emoji)}
+                            className="text-2xl hover:bg-dark-100 rounded p-1 transition-colors"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
             <button
               type="submit"
-              disabled={!message.trim() || sending}
+              disabled={(!message.trim() && !attachedFile) || sending}
               className="btn-primary px-4 py-2.5 disabled:opacity-50 disabled:cursor-not-allowed"
               title="Send message"
             >
@@ -578,6 +880,7 @@ export default function CSpace() {
         title={modalTitle}
         message={modalMessage}
       />
+      </div>
     </div>
   )
 }

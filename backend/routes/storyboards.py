@@ -156,12 +156,27 @@ def delete_panel(panel_id):
 def generate_panel_image(panel_id):
     """Generate AI image for storyboard panel"""
     user_id = get_jwt_identity()
+    
+    print(f"🎬 Received image generation request for panel_id: {panel_id}")
+    
     panel = StoryboardPanel.query.get(panel_id)
     
     if not panel:
+        print(f"❌ Panel {panel_id} not found in database")
+        # Show all panels for debugging
+        all_panels = StoryboardPanel.query.all()
+        print(f"Available panels: {[p.panel_id for p in all_panels]}")
         return jsonify({'error': 'Panel not found'}), 404
     
+    print(f"✅ Panel found: {panel.panel_id}")
+    print(f"   Scene ID: {panel.scene_id}")
+    print(f"   Image prompt: {panel.image_prompt[:100] if panel.image_prompt else 'None'}...")
+    
     scene = Scene.query.get(panel.scene_id)
+    
+    if not scene:
+        print(f"❌ Scene {panel.scene_id} not found")
+        return jsonify({'error': 'Scene not found'}), 404
     
     try:
         gemini_service = GeminiService()
@@ -192,11 +207,25 @@ def generate_panel_image(panel_id):
         }
         db.session.commit()
         
-        # TODO: Actual image generation would happen here via Stable Diffusion/DALL-E API
-        # For now, we'll mark it as completed with the prompt
-        panel.status = 'completed'
-        panel.generation_timestamp = db.func.now()
-        panel.ai_model_used = 'Gemini (prompt optimization)'
+        # Generate actual image using Gemini Imagen 3
+        print(f"🎨 Generating image for panel {panel_id} with Gemini Imagen 3...")
+        image_data = gemini_service.generate_image(
+            prompt=enhanced_prompt,
+            negative_prompt=panel.negative_prompt or "blurry, bad quality, distorted, text, watermark, low resolution"
+        )
+        
+        if image_data:
+            # Save image to database as base64
+            panel.generated_image_url = image_data
+            panel.status = 'completed'
+            panel.generation_timestamp = db.func.now()
+            panel.ai_model_used = 'Gemini Imagen 3'
+            
+            print(f"✅ Image generated successfully for panel {panel_id}")
+        else:
+            panel.status = 'failed'
+            db.session.commit()
+            return jsonify({'error': 'Image generation failed. Please try again.'}), 500
         
         # Log AI processing
         from models import AIProcessingLog
@@ -205,8 +234,8 @@ def generate_panel_image(panel_id):
             user_id=user_id,
             operation_type='image_generation',
             input_data={'panel_id': panel_id, 'prompt': enhanced_prompt},
-            output_data={'status': 'completed'},
-            ai_model='Gemini + Stable Diffusion',
+            output_data={'status': 'completed', 'has_image': bool(image_data)},
+            ai_model='Gemini Imagen 3',
             status='completed'
         )
         db.session.add(ai_log)
@@ -223,6 +252,9 @@ def generate_panel_image(panel_id):
     except Exception as e:
         panel.status = 'failed'
         db.session.commit()
+        print(f"❌ Error generating image: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'Generation failed: {str(e)}'}), 500
 
 
@@ -266,3 +298,125 @@ def create_visual_style(project_id):
         'message': 'Visual style created',
         'style': style.to_dict()
     }), 201
+
+
+@storyboards_bp.route('/project/<int:project_id>/download', methods=['GET'])
+@jwt_required()
+@project_permission_required('viewer')
+def download_storyboards(project_id):
+    """Download all storyboard panels for a project as PDF"""
+    from flask import send_file
+    from reportlab.lib.pagesizes import letter, A4
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    import io
+    from datetime import datetime
+    
+    project = Project.query.get(project_id)
+    if not project:
+        return jsonify({'error': 'Project not found'}), 404
+    
+    # Get all scenes and panels
+    scenes = Scene.query.filter_by(project_id=project_id).order_by(Scene.scene_number).all()
+    
+    if not scenes:
+        return jsonify({'error': 'No scenes found for this project'}), 404
+    
+    # Create PDF in memory
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1a56db'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor('#1a56db'),
+        spaceAfter=12
+    )
+    
+    # Title page
+    elements.append(Spacer(1, 2*inch))
+    elements.append(Paragraph(f"<b>{project.title}</b>", title_style))
+    elements.append(Spacer(1, 0.3*inch))
+    elements.append(Paragraph(f"Storyboard", styles['Heading2']))
+    elements.append(Spacer(1, 0.2*inch))
+    if project.genre:
+        elements.append(Paragraph(f"Genre: {project.genre}", styles['Normal']))
+    elements.append(Paragraph(f"Generated: {datetime.utcnow().strftime('%B %d, %Y')}", styles['Normal']))
+    elements.append(PageBreak())
+    
+    # Add scenes and panels
+    for scene in scenes:
+        panels = StoryboardPanel.query.filter_by(scene_id=scene.scene_id).order_by(StoryboardPanel.panel_number).all()
+        
+        if panels:
+            # Scene header
+            elements.append(Paragraph(f"<b>Scene {scene.scene_number}</b>", heading_style))
+            if scene.description:
+                elements.append(Paragraph(scene.description, styles['Normal']))
+            elements.append(Spacer(1, 0.2*inch))
+            
+            # Add panels
+            for panel in panels:
+                # Panel info table
+                panel_data = [
+                    ['Panel', str(panel.panel_number)],
+                    ['Shot Type', panel.shot_type or 'Medium'],
+                    ['Camera Angle', panel.camera_angle or 'Eye Level'],
+                ]
+                
+                panel_table = Table(panel_data, colWidths=[1.5*inch, 4*inch])
+                panel_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f3f4f6')),
+                    ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey)
+                ]))
+                
+                elements.append(panel_table)
+                elements.append(Spacer(1, 0.1*inch))
+                
+                # Image prompt
+                if panel.image_prompt:
+                    elements.append(Paragraph(f"<b>Prompt:</b> {panel.image_prompt}", styles['Normal']))
+                
+                if panel.notes:
+                    elements.append(Paragraph(f"<b>Notes:</b> {panel.notes}", styles['Normal']))
+                
+                elements.append(Spacer(1, 0.3*inch))
+            
+            elements.append(PageBreak())
+    
+    # Build PDF
+    doc.build(elements)
+    buffer.seek(0)
+    
+    # Generate filename
+    filename = f"{project.title.replace(' ', '_')}_Storyboard_{datetime.utcnow().strftime('%Y%m%d')}.pdf"
+    
+    return send_file(
+        buffer,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=filename
+    )

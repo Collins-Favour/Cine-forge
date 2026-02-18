@@ -77,25 +77,7 @@ export default function FilmmakerDashboard() {
         />
       </div>
 
-      {/* Recent Projects */}
-      <div className="card">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-dark-900">Recent Projects</h2>
-          <Link to="/projects" className="text-primary-600 hover:text-primary-700 font-medium">
-            View All →
-          </Link>
-        </div>
 
-        {stats?.recent_projects?.length > 0 ? (
-          <div className="space-y-4">
-            {stats.recent_projects.map((project) => (
-              <ProjectCard key={project.project_id} project={project} />
-            ))}
-          </div>
-        ) : (
-          <EmptyState />
-        )}
-      </div>
     </div>
   )
 }

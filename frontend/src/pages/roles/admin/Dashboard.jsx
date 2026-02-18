@@ -15,6 +15,9 @@ export default function AdminDashboard() {
   const { data: stats } = useQuery('admin-stats', async () => {
     const response = await api.get('/admin/dashboard')
     return response.data
+  }, {
+    refetchInterval: 10000, // Refresh every 10 seconds
+    refetchIntervalInBackground: true
   })
 
   return (
@@ -81,14 +84,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* Quick Actions */}
-      <div className="grid md:grid-cols-4 gap-6 mb-8">
-        <QuickActionCard
-          title="User Management"
-          description="Manage users & roles"
-          icon={<Users className="w-8 h-8" />}
-          color="primary-500"
-          link="/admin/users"
-        />
+      <div className="grid md:grid-cols-3 gap-6 mb-8">
         <QuickActionCard
           title="System Settings"
           description="Configure system"

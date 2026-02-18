@@ -48,6 +48,11 @@ export const projectsApi = {
     return api.patch(`/projects/${projectId}/collaborators/${collaborationId}`, data)
   },
 
+  // Respond to collaboration invitation (accept/decline)
+  respondToInvitation: (projectId, collaborationId, status) => {
+    return api.post(`/projects/${projectId}/collaborators/${collaborationId}/respond`, { status })
+  },
+
   // Generate AI content (script and storyboard) from project synopsis
   generateContent: (projectId) => {
     return api.post(`/projects/${projectId}/generate-content`)
@@ -202,6 +207,13 @@ export const storyboardsApi = {
   generatePanelImage: (panelId, data) => {
     return api.post(`/storyboards/panels/${panelId}/generate`, data)
   },
+
+  // Download storyboards as PDF
+  downloadStoryboards: (projectId) => {
+    return api.get(`/storyboards/project/${projectId}/download`, {
+      responseType: 'blob'
+    })
+  },
 }
 
 // C-Space (Collaboration) APIs
@@ -238,10 +250,28 @@ export const cspaceApi = {
   },
 
   // Upload file
-  uploadFile: (projectId, formData) => {
-    return api.post(`/collaboration/upload/${projectId}`, formData, {
+  uploadFile: (formData) => {
+    // Extract project_id from formData to construct the URL
+    const projectId = formData.get('project_id')
+    return api.post(`/collaboration/project/${projectId}/upload-file`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+  },
+
+  // Get notifications
+  getNotifications: (params = {}) => {
+    const queryParams = new URLSearchParams(params).toString()
+    return api.get(`/collaboration/notifications${queryParams ? `?${queryParams}` : ''}`)
+  },
+
+  // Mark notification as read
+  markNotificationRead: (notificationId) => {
+    return api.post(`/collaboration/notifications/${notificationId}/read`)
+  },
+
+  // Mark all notifications as read
+  markAllNotificationsRead: () => {
+    return api.post('/collaboration/notifications/read-all')
   },
 }
 
@@ -302,16 +332,6 @@ export const adminApi = {
 
   resetUserPassword: (userId, newPassword) => {
     return api.post(`/admin/users/${userId}/reset-password`, { new_password: newPassword })
-  },
-
-  // Project Management
-  getAllProjects: (params = {}) => {
-    const queryParams = new URLSearchParams(params).toString()
-    return api.get(`/admin/projects${queryParams ? `?${queryParams}` : ''}`)
-  },
-
-  deleteProject: (projectId) => {
-    return api.delete(`/admin/projects/${projectId}`)
   },
 
   // Analytics

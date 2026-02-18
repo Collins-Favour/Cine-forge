@@ -265,7 +265,7 @@ export default function ProjectDetails() {
               <MessageSquare className="w-6 h-6 text-green-600" />
             </div>
             <div>
-              <div className="font-semibold text-dark-900">C-Space</div>
+              <div className="font-semibold text-dark-900">Team Chat</div>
               <div className="text-sm text-dark-600">Collaborate</div>
             </div>
           </div>

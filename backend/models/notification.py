@@ -17,6 +17,7 @@ class Notification(db.Model):
     title = db.Column(db.String(255), nullable=False)
     message = db.Column(db.Text)
     link_url = db.Column(db.String(500))
+    action_data = db.Column(db.Text)  # JSON string for additional data
     is_read = db.Column(db.Boolean, default=False, index=True)
     read_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
@@ -30,6 +31,7 @@ class Notification(db.Model):
             'title': self.title,
             'message': self.message,
             'link_url': self.link_url,
+            'action_data': self.action_data,
             'is_read': self.is_read,
             'read_at': self.read_at.isoformat() if self.read_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,

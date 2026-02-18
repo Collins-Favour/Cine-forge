@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
 import { motion } from 'framer-motion'
-import { Users, Search, Filter, Edit2, Trash2, Shield, Lock, Mail, MoreVertical, UserPlus, Download, RefreshCw } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Users, Search, Filter, Edit2, Trash2, Shield, Lock, Mail, MoreVertical, UserPlus, Download, RefreshCw, ArrowLeft } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 import { adminApi } from '@services/apiServices'
 import { SuccessModal, ErrorModal, ConfirmModal, PromptModal } from '@components/Modal'
 
 export default function UserManagement() {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')

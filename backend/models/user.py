@@ -15,8 +15,10 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     first_name = db.Column(db.String(100))
     last_name = db.Column(db.String(100))
-    profile_pic_url = db.Column(db.String(500))
+    profile_pic_url = db.Column(db.Text)  # Changed to Text to support base64-encoded images
     bio = db.Column(db.Text)
+    phone = db.Column(db.String(20))
+    location = db.Column(db.String(255))
     role = db.Column(db.Enum('student', 'filmmaker', 'professional', 'admin', 'investor', 'actor', 'crew_member'), default='filmmaker')
     is_active = db.Column(db.Boolean, default=True, index=True)
     is_verified = db.Column(db.Boolean, default=False)
@@ -52,6 +54,8 @@ class User(db.Model):
             'last_name': self.last_name,
             'profile_pic_url': self.profile_pic_url,
             'bio': self.bio,
+            'phone': self.phone,
+            'location': self.location,
             'role': self.role,
             'is_active': self.is_active,
             'is_verified': self.is_verified,

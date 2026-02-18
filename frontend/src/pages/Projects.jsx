@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { Plus, Search, Filter, FolderOpen, Users, Calendar, MoreVertical } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { Plus, Search, Filter, FolderOpen, Users, Calendar, MoreVertical, Crown, UserCheck, ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '@store/authStore'
 import { projectsApi } from '@services/apiServices'
 
 export default function Projects() {
   const { user } = useAuthStore()
+  const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [projects, setProjects] = useState([])
+  const [ownedProjects, setOwnedProjects] = useState([])
+  const [collaboratedProjects, setCollaboratedProjects] = useState([])
+  const [viewMode, setViewMode] = useState('all') // 'all', 'owned', 'collaborated'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -19,13 +23,30 @@ export default function Projects() {
   const fetchProjects = async () => {
     try {
       setLoading(true)
-      const response = await projectsApi.getProjects()
-      setProjects(response.data.projects || [])
       setError(null)
+      
+      const response = await projectsApi.getProjects()
+      const data = response.data
+      
+      // Ensure we're setting arrays, not undefined
+      const projects = Array.isArray(data.projects) ? data.projects : []
+      const owned = Array.isArray(data.owned_projects) ? data.owned_projects : []
+      const collaborated = Array.isArray(data.collaborated_projects) ? data.collaborated_projects : []
+      
+      console.log('✅ Projects loaded:', { total: projects.length, owned: owned.length, collaborated: collaborated.length })
+      
+      setProjects(projects)
+      setOwnedProjects(owned)
+      setCollaboratedProjects(collaborated)
     } catch (err) {
-      console.error('Error fetching projects:', err)
-      setError(err.response?.data?.error || 'Failed to load projects')
+      console.error('❌ Error fetching projects:', err)
+      const errorMsg = err.response?.data?.error || 'Unable to load projects. Please try again.'
+      setError(errorMsg)
+      
+      // Reset to empty arrays on error
       setProjects([])
+      setOwnedProjects([])
+      setCollaboratedProjects([])
     } finally {
       setLoading(false)
     }
@@ -47,7 +68,19 @@ export default function Projects() {
     completed: 'Completed'
   }
 
-  const filteredProjects = projects.filter(project => {
+  // Get projects based on view mode
+  const getProjectsForView = () => {
+    switch (viewMode) {
+      case 'owned':
+        return ownedProjects
+      case 'collaborated':
+        return collaboratedProjects
+      default:
+        return projects
+    }
+  }
+
+  const filteredProjects = getProjectsForView().filter(project => {
     const matchesSearch = project.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          (project.description || project.logline || '').toLowerCase().includes(searchQuery.toLowerCase())
     
@@ -82,9 +115,18 @@ export default function Projects() {
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl font-display font-bold text-dark-900 mb-2">Projects</h1>
-          <p className="text-dark-600">Manage your film projects and collaborate with your team</p>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="btn-secondary flex items-center gap-2 px-3 py-2"
+            title="Back to Dashboard"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h1 className="text-3xl font-display font-bold text-dark-900 mb-2">Projects</h1>
+            <p className="text-dark-600">Manage your film projects and collaborate with your team</p>
+          </div>
         </div>
         <Link
           to="/projects/new"
@@ -93,6 +135,44 @@ export default function Projects() {
           <Plus className="w-5 h-5" />
           <span>New Project</span>
         </Link>
+      </div>
+
+      {/* View Mode Tabs */}
+      <div className="mb-6">
+        <div className="border-b border-dark-200">
+          <nav className="-mb-px flex space-x-8">
+            <button
+              onClick={() => setViewMode('all')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                viewMode === 'all'
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-dark-500 hover:text-dark-700 hover:border-dark-300'
+              }`}
+            >
+              All Projects ({projects.length})
+            </button>
+            <button
+              onClick={() => setViewMode('owned')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                viewMode === 'owned'
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-dark-500 hover:text-dark-700 hover:border-dark-300'
+              }`}
+            >
+              My Projects ({ownedProjects.length})
+            </button>
+            <button
+              onClick={() => setViewMode('collaborated')}
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors ${
+                viewMode === 'collaborated'
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-dark-500 hover:text-dark-700 hover:border-dark-300'
+              }`}
+            >
+              Collaborated ({collaboratedProjects.length})
+            </button>
+          </nav>
+        </div>
       </div>
 
       {/* Filters */}
@@ -118,7 +198,7 @@ export default function Projects() {
               onChange={(e) => setFilterStatus(e.target.value)}
               className="input min-w-[180px]"
             >
-              <option value="all">All Projects</option>
+              <option value="all">All Stages</option>
               <option value="active">Active Projects</option>
               <option value="completed">Completed</option>
               <option value="concept">Concept</option>
@@ -156,8 +236,21 @@ export default function Projects() {
               className="card hover:shadow-xl transition-all duration-300 group"
             >
               {/* Thumbnail */}
-              <div className="aspect-video bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg mb-4 flex items-center justify-center">
+              <div className="aspect-video bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg mb-4 flex items-center justify-center relative">
                 <FolderOpen className="w-16 h-16 text-white/50 group-hover:scale-110 transition-transform" />
+                
+                {/* Ownership indicator */}
+                <div className="absolute top-2 right-2">
+                  {project.created_by === user?.user_id ? (
+                    <div className="bg-yellow-500 text-white p-1 rounded-full" title="You own this project">
+                      <Crown className="w-3 h-3" />
+                    </div>
+                  ) : (
+                    <div className="bg-blue-500 text-white p-1 rounded-full" title="Collaborated project">
+                      <UserCheck className="w-3 h-3" />
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Content */}

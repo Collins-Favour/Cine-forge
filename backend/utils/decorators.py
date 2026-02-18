@@ -34,6 +34,7 @@ def project_permission_required(required_role):
     """
     Check if user has required permission for project
     Roles hierarchy: viewer < editor < writer < director < owner
+    Admins bypass all permission checks
     """
     role_hierarchy = {
         'viewer': 0,
@@ -51,6 +52,12 @@ def project_permission_required(required_role):
             
             if not project_id:
                 return jsonify({'error': 'Project ID required'}), 400
+            
+            # Check if user is admin - admins have access to all projects
+            from models import User
+            user = User.query.get(int(user_id))
+            if user and user.role == 'admin':
+                return f(*args, **kwargs)
             
             # Check if user is collaborator
             collaboration = ProjectCollaborator.query.filter_by(

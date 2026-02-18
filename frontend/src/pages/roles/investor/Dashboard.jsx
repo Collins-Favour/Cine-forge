@@ -13,7 +13,7 @@ export default function InvestorDashboard() {
   const [showProfileSettings, setShowProfileSettings] = useState(false)
 
   const { data: stats } = useQuery('investor-stats', async () => {
-    const response = await api.get(`/users/${user.user_id}/dashboard`)
+    const response = await api.get('/users/dashboard')
     return response.data
   })
 

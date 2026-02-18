@@ -25,6 +25,7 @@ import UserDetail from '@pages/roles/admin/UserDetail'
 import SystemSettings from '@pages/roles/admin/SystemSettings'
 import Analytics from '@pages/roles/admin/Analytics'
 import SecurityLogs from '@pages/roles/admin/SecurityLogs'
+import ProjectManagement from '@pages/roles/admin/ProjectManagement'
 
 // Layout
 import MainLayout from '@components/layout/MainLayout'
@@ -61,6 +62,7 @@ function App() {
         {/* Admin Routes */}
         <Route path="/admin/users" element={<AdminRoute><UserManagement /></AdminRoute>} />
         <Route path="/admin/users/:userId" element={<AdminRoute><UserDetail /></AdminRoute>} />
+        <Route path="/admin/projects" element={<AdminRoute><ProjectManagement /></AdminRoute>} />
         <Route path="/admin/settings" element={<AdminRoute><SystemSettings /></AdminRoute>} />
         <Route path="/admin/analytics" element={<AdminRoute><Analytics /></AdminRoute>} />
         <Route path="/admin/security" element={<AdminRoute><SecurityLogs /></AdminRoute>} />

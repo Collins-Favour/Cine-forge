@@ -1,0 +1,13 @@
+Convert this scene description into a detailed visual prompt for image generation.
+
+Include:
+- Camera angle and framing
+- Lighting conditions
+- Color palette
+- Mood and atmosphere
+- Specific visual elements
+- Art style: {style}
+
+Scene: {scene_description}
+
+Generate a single, detailed prompt suitable for image generation AI.
