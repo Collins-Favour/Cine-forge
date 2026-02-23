@@ -8,7 +8,7 @@ Flask-Bcrypt==1.0.1
 Flask-SocketIO==5.3.6
 
 # Database
-PyMySQL==1.1.0
+psycopg2-binary==2.9.9
 cryptography==41.0.7
 SQLAlchemy==2.0.23
 

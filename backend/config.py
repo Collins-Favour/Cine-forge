@@ -16,13 +16,17 @@ class Config:
     APP_NAME = 'CineForge AI'
     VERSION = '1.0.0'
     
-    # Database
+    # Database - Supabase PostgreSQL
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DATABASE_URL',
-        'mysql+pymysql://root:@localhost/cineforge_ai'
+        'postgresql://postgres:password@localhost/cineforge_ai'
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,  # Check connection health before using
+        'pool_recycle': 300,    # Recycle connections every 5 minutes
+    }
     
     # JWT Authentication
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key-change-in-production')
