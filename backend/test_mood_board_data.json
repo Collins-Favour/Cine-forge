@@ -1,0 +1,21 @@
+{
+  "title": "Neon Nights",
+  "genre": "Cyberpunk Thriller",
+  "images": [
+    {
+      "category": "Atmosphere",
+      "description": "Overall visual atmosphere",
+      "prompt": "Cinematic Cyberpunk Thriller film atmosphere, In a neon-lit megacity controlled by corrupt corporations, a rogue hacker discovers a conspiracy tha, highly detailed, atmospheric lighting, film grain"
+    },
+    {
+      "category": "Color Palette",
+      "description": "Color mood and tone",
+      "prompt": "Cyberpunk Thriller color palette and mood, cinematic lighting, color grading reference, professional photography"
+    },
+    {
+      "category": "Character Mood",
+      "description": "Character emotion and style",
+      "prompt": "Character portrait in Cyberpunk Thriller style, emotional expression, cinematic lighting, detailed face"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 """
 Gemini AI Service for Image Generation
+UPDATED: Uses multiple image generation APIs with fallback support
 """
 import os
 import google.generativeai as genai
@@ -7,8 +8,9 @@ import requests
 import base64
 from io import BytesIO
 from PIL import Image
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import time
+import json
 
 
 class GeminiService:
@@ -21,11 +23,27 @@ class GeminiService:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
         
         genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
-        self.vision_model = genai.GenerativeModel('gemini-pro-vision')
+        # Text/analysis model
+        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        # Image generation model - Nano Banana
+        self.image_model = genai.GenerativeModel('gemini-2.5-flash-image')
         
-        # Imagen 3 API endpoint
-        self.imagen_url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict"
+        self.imagen_available = True
+        self.api_endpoints = self._initialize_image_apis()
+    
+    def _initialize_image_apis(self) -> List[Dict[str, Any]]:
+        """Initialize available image generation APIs with priority order"""
+        apis = []
+        
+        # Gemini Nano Banana - Only image generation API
+        apis.append({
+            'name': 'Gemini Nano Banana',
+            'type': 'gemini_imagen',
+            'enabled': True,
+            'priority': 1
+        })
+        
+        return apis
     
     def generate_storyboard_from_project(self, title: str, genre: str, logline: str, synopsis: str) -> Optional[str]:
         """Generate storyboard image prompt directly from project information (intelligent mode)"""
@@ -203,117 +221,214 @@ Context: {context}"""
     
     def generate_image(self, prompt: str, negative_prompt: str = "", retries: int = 3) -> Optional[str]:
         """
-        Generate image using Google Imagen 3
-        Returns base64 encoded image or None if failed
+        Generate image using multiple APIs with fallback support
+        Returns base64 encoded image or None if all methods fail
         """
-        # Build the request payload for Imagen
-        payload = {
-            "instances": [
-                {
-                    "prompt": prompt
-                }
-            ],
-            "parameters": {
-                "sampleCount": 1,
-                "aspectRatio": "16:9",
-                "safetyFilterLevel": "block_some",
-                "personGeneration": "allow_adult"
-            }
-        }
-        
+        print(f"\n{'='*80}")
+        print(f"🎨 IMAGE GENERATION REQUEST")
+        print(f"{'='*80}")
+        print(f"📝 Prompt: {prompt[:200]}...")
         if negative_prompt:
-            payload["parameters"]["negativePrompt"] = negative_prompt
+            print(f"🚫 Negative: {negative_prompt}")
+        print(f"{'='*80}\n")
         
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        for attempt in range(retries):
-            try:
-                print(f"🎨 Generating image with Gemini Imagen 3 (attempt {attempt + 1}/{retries})...")
-                print(f"   📝 IMAGE PROMPT:")
-                print(f"   {prompt}")
-                print(f"   ---")
-                if negative_prompt:
-                    print(f"   🚫 Negative prompt: {negative_prompt}")
-                
-                print(f"   📤 Sending request to Imagen API...")
-                response = requests.post(
-                    self.imagen_url,
-                    params={"key": self.api_key},
-                    headers=headers,
-                    json=payload,
-                    timeout=120
-                )
-                
-                print(f"   📥 Response status: {response.status_code}")
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    # Extract image data from response
-                    if "predictions" in result and len(result["predictions"]) > 0:
-                        prediction = result["predictions"][0]
-                        
-                        # Imagen returns base64 encoded images
-                        if "bytesBase64Encoded" in prediction:
-                            base64_image = prediction["bytesBase64Encoded"]
-                            
-                            # Verify it's a valid image
-                            try:
-                                image_bytes = base64.b64decode(base64_image)
-                                img = Image.open(BytesIO(image_bytes))
-                                img.verify()
-                                
-                                # Reopen and convert to RGB if needed
-                                img = Image.open(BytesIO(image_bytes))
-                                if img.mode != 'RGB':
-                                    img = img.convert('RGB')
-                                
-                                # Convert to PNG for consistency
-                                buffer = BytesIO()
-                                img.save(buffer, format='PNG', quality=95)
-                                buffer.seek(0)
-                                
-                                base64_png = base64.b64encode(buffer.getvalue()).decode('utf-8')
-                                print(f"✅ Image generated successfully with Gemini Imagen 3!")
-                                
-                                return f"data:image/png;base64,{base64_png}"
-                            
-                            except Exception as img_error:
-                                print(f"❌ Invalid image received: {img_error}")
-                                if attempt < retries - 1:
-                                    time.sleep(5)
-                                    continue
-                    
-                    print(f"❌ No image data in response: {result}")
-                    if attempt < retries - 1:
-                        time.sleep(5)
-                        continue
-                
-                else:
-                    error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
-                    print(f"❌ Image generation failed: {response.status_code}")
-                    print(f"   Error: {error_data}")
-                    
-                    if attempt < retries - 1:
-                        print(f"   Retrying in 10 seconds...")
-                        time.sleep(10)
-                        continue
-                
-            except requests.exceptions.Timeout:
-                print(f"⏱️ Request timeout (attempt {attempt + 1}/{retries})")
-                if attempt < retries - 1:
-                    time.sleep(10)
-                    continue
+        # Try each API in priority order
+        for api in self.api_endpoints:
+            if not api.get('enabled'):
+                continue
             
-            except Exception as e:
-                print(f"❌ Error generating image: {e}")
-                import traceback
-                traceback.print_exc()
-                if attempt < retries - 1:
-                    time.sleep(10)
+            print(f"🔄 Trying {api['name']}...")
+            
+            try:
+                if api['type'] == 'gemini_imagen':
+                    result = self._generate_with_gemini_imagen(prompt, negative_prompt)
+                else:
                     continue
+                
+                if result:
+                    print(f"✅ Successfully generated image with {api['name']}!")
+                    return result
+                    
+            except Exception as e:
+                print(f"❌ {api['name']} failed: {e}")
+                continue
         
-        print(f"❌ Failed to generate image after {retries} attempts")
+        print(f"❌ All image generation methods failed")
         return None
+    
+    def _generate_with_gemini_imagen(self, prompt: str, negative_prompt: str = "") -> Optional[str]:
+        """Generate image using Gemini Nano Banana (gemini-2.5-flash-image)"""
+        
+        print(f"   📤 Requesting from Gemini Nano Banana...")
+        
+        try:
+            # Build the full prompt with negative prompt if provided
+            full_prompt = f"Generate an image: {prompt}"
+            if negative_prompt:
+                full_prompt += f"\n\nAvoid: {negative_prompt}"
+            
+            # Generate image using Gemini Nano Banana
+            response = self.image_model.generate_content(
+                full_prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.6,
+                    candidate_count=1,
+                )
+            )
+            
+            # Check if response contains image data
+            if response and hasattr(response, 'parts'):
+                for part in response.parts:
+                    if hasattr(part, 'inline_data'):
+                        # Get the image bytes
+                        image_bytes = part.inline_data.data
+                        
+                        # Convert to PIL Image
+                        img = Image.open(BytesIO(image_bytes))
+                        
+                        # Resize to target dimensions
+                        img = img.resize((1024, 576), Image.Resampling.LANCZOS)
+                        
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        
+                        # Convert to base64
+                        buffer = BytesIO()
+                        img.save(buffer, format='PNG', quality=95)
+                        buffer.seek(0)
+                        
+                        base64_png = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                        print(f"   ✅ Image generated: {img.size[0]}x{img.size[1]} pixels")
+                        
+                        return f"data:image/png;base64,{base64_png}"
+            
+            print(f"   ❌ No image data in response")
+            return None
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Handle quota/rate limit errors with helpful message
+            if '429' in error_msg or 'quota' in error_msg.lower() or 'ResourceExhausted' in str(type(e).__name__):
+                print(f"   ⚠️  Quota exceeded for Gemini Nano Banana")
+                print(f"   ℹ️  Please wait a moment and try again, or upgrade your API plan")
+                print(f"   🔗 Check usage: https://ai.dev/rate-limit")
+            else:
+                print(f"   ❌ Gemini Nano Banana error: {e}")
+                print(f"   ℹ️  Error type: {type(e).__name__}")
+            
+            return None
+    
+    def generate_mood_board(self, project_title: str, genre: str, logline: str, 
+                          num_images: int = 4) -> List[Dict[str, Any]]:
+        """
+        Generate a mood board with multiple reference images
+        Returns list of image data with descriptions
+        """
+        print(f"\n{'='*80}")
+        print(f"🎨 MOOD BOARD GENERATION")
+        print(f"{'='*80}")
+        print(f"Project: {project_title}")
+        print(f"Genre: {genre}")
+        print(f"Images: {num_images}")
+        print(f"{'='*80}\n")
+        
+        # Generate different prompts for mood board variety
+        mood_prompts = self._generate_mood_board_prompts(
+            project_title, genre, logline, num_images
+        )
+        
+        mood_board = []
+        
+        for i, prompt_data in enumerate(mood_prompts, 1):
+            print(f"🖼️ Generating image {i}/{num_images}: {prompt_data['category']}")
+            print(f"   📝 Prompt: {prompt_data['prompt'][:100]}...")
+            
+            image_data = self.generate_image(
+                prompt=prompt_data['prompt'],
+                negative_prompt="text, watermark, low quality, blurry, distorted"
+            )
+            
+            if image_data:
+                mood_board.append({
+                    'category': prompt_data['category'],
+                    'description': prompt_data['description'],
+                    'image_data': image_data,
+                    'prompt': prompt_data['prompt']
+                })
+                print(f"   ✅ Image {i} generated successfully")
+            else:
+                print(f"   ❌ Image {i} generation failed")
+            
+            # Small delay between images
+            if i < len(mood_prompts):
+                time.sleep(2)
+        
+        print(f"\n✅ Mood board complete: {len(mood_board)}/{num_images} images generated\n")
+        return mood_board
+    
+    def _generate_mood_board_prompts(self, title: str, genre: str, logline: str, 
+                                    num_images: int) -> List[Dict[str, str]]:
+        """Generate diverse prompts for mood board"""
+        
+        # Ask Gemini to create mood board prompts
+        prompt = f"""Create {num_images} diverse visual prompts for a mood board:
+
+Title: {title}
+Genre: {genre}
+Logline: {logline}
+
+Generate {num_images} different image prompts covering:
+1. Overall atmosphere
+2. Color palette
+3. Character mood
+4. Visual style
+
+For each, provide:
+- Category
+- Description (brief)
+- Prompt (detailed visual description, 30-50 words)
+
+Return as JSON array: [{{"category": "...", "description": "...", "prompt": "..."}}]"""
+        
+        try:
+            response = self.model.generate_content(prompt)
+            
+            if response and response.text:
+                # Extract JSON
+                text = response.text
+                json_start = text.find('[')
+                json_end = text.rfind(']') + 1
+                
+                if json_start != -1 and json_end > json_start:
+                    prompts = json.loads(text[json_start:json_end])
+                    print(f"✅ Generated {len(prompts)} mood board prompts via Gemini")
+                    return prompts[:num_images]
+        
+        except Exception as e:
+            print(f"⚠️ Gemini mood board prompt generation failed: {e}")
+        
+        # Fallback: Create generic prompts
+        print(f"ℹ️ Using fallback mood board prompts")
+        return [
+            {
+                'category': 'Atmosphere',
+                'description': 'Overall visual atmosphere',
+                'prompt': f"Cinematic {genre} film atmosphere, {logline}, highly detailed, atmospheric lighting, film grain"
+            },
+            {
+                'category': 'Color Palette',
+                'description': 'Color mood and tone',
+                'prompt': f"{genre} color palette and mood, cinematic lighting, color grading reference, professional photography"
+            },
+            {
+                'category': 'Character Mood',
+                'description': 'Character emotion and style',
+                'prompt': f"Character portrait in {genre} style, emotional expression, cinematic lighting, detailed face"
+            },
+            {
+                'category': 'Visual Motif',
+                'description': 'Key visual elements',
+                'prompt': f"Key visual element from {genre} film, symbolic imagery, cinematic composition, artistic"
+            }
+        ][:num_images]

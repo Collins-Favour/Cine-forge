@@ -39,10 +39,9 @@ class Config:
     # CORS
     CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
     
-    # AI Services
+    # AI Services - Groq and Gemini only
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     AI_MODEL = os.getenv('model', 'GPT-4')
     
     # File Upload

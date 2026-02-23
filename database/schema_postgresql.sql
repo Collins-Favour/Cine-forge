@@ -24,7 +24,7 @@ CREATE TYPE generation_status AS ENUM ('pending', 'generating', 'completed', 'fa
 CREATE TYPE checklist_category AS ENUM ('props', 'wardrobe', 'location', 'cast', 'equipment', 'vfx', 'sound', 'other');
 CREATE TYPE priority_level AS ENUM ('low', 'medium', 'high', 'critical');
 CREATE TYPE message_type AS ENUM ('text', 'annotation', 'feedback', 'approval', 'file');
-CREATE TYPE ai_operation AS ENUM ('script_analysis', 'scene_breakdown', 'image_generation', 'mood_suggestion', 'location_suggestion');
+CREATE TYPE ai_operation AS ENUM ('script_analysis', 'scene_breakdown', 'image_generation', 'mood_suggestion', 'location_suggestion', 'auto_script_generation', 'storyboard_image_generation', 'mood_board_generation');
 CREATE TYPE processing_status AS ENUM ('pending', 'processing', 'completed', 'failed');
 CREATE TYPE notification_type AS ENUM ('collaboration_invite', 'message', 'task_assigned', 'generation_complete', 'mention', 'system');
 CREATE TYPE export_type AS ENUM ('storyboard_pdf', 'script_pdf', 'checklist_pdf', 'full_package');

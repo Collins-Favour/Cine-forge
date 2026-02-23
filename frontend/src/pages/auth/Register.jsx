@@ -74,12 +74,15 @@ export default function Register() {
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
             {/* First Name */}
             <div>
-              <label className="block text-sm font-medium text-dark-800 mb-2">First Name</label>
+              <label htmlFor="first_name" className="block text-sm font-medium text-dark-800 mb-2">First Name</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
                   {...register('first_name')}
+                  id="first_name"
+                  name="first_name"
                   type="text"
+                  autoComplete="given-name"
                   placeholder="John"
                   className={`input pl-10 ${errors.first_name ? 'border-red-500' : ''}`}
                 />
@@ -89,12 +92,15 @@ export default function Register() {
 
             {/* Last Name */}
             <div>
-              <label className="block text-sm font-medium text-dark-800 mb-2">Last Name</label>
+              <label htmlFor="last_name" className="block text-sm font-medium text-dark-800 mb-2">Last Name</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
                   {...register('last_name')}
+                  id="last_name"
+                  name="last_name"
                   type="text"
+                  autoComplete="family-name"
                   placeholder="Doe"
                   className={`input pl-10 ${errors.last_name ? 'border-red-500' : ''}`}
                 />
@@ -104,12 +110,15 @@ export default function Register() {
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-dark-800 mb-2">Email</label>
+              <label htmlFor="email" className="block text-sm font-medium text-dark-800 mb-2">Email</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
                   {...register('email')}
+                  id="email"
+                  name="email"
                   type="email"
+                  autoComplete="email"
                   placeholder="you@example.com"
                   className={`input pl-10 ${errors.email ? 'border-red-500' : ''}`}
                 />
@@ -119,12 +128,15 @@ export default function Register() {
 
             {/* Username */}
             <div>
-              <label className="block text-sm font-medium text-dark-800 mb-2">Username</label>
+              <label htmlFor="username" className="block text-sm font-medium text-dark-800 mb-2">Username</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
                   {...register('username')}
+                  id="username"
+                  name="username"
                   type="text"
+                  autoComplete="username"
                   placeholder="johndoe"
                   className={`input pl-10 ${errors.username ? 'border-red-500' : ''}`}
                 />
@@ -134,12 +146,15 @@ export default function Register() {
 
             {/* Password */}
             <div>
-              <label className="block text-sm font-medium text-dark-800 mb-2">Password</label>
+              <label htmlFor="password" className="block text-sm font-medium text-dark-800 mb-2">Password</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
                   {...register('password')}
+                  id="password"
+                  name="password"
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
                   placeholder="••••••••"
                   className={`input pl-10 pr-10 ${errors.password ? 'border-red-500' : ''}`}
                 />
@@ -147,6 +162,7 @@ export default function Register() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 transform -translate-y-1/2 text-dark-400"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -156,12 +172,15 @@ export default function Register() {
 
             {/* Confirm Password */}
             <div>
-              <label className="block text-sm font-medium text-dark-800 mb-2">Confirm Password</label>
+              <label htmlFor="confirmPassword" className="block text-sm font-medium text-dark-800 mb-2">Confirm Password</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-dark-400" />
                 <input
                   {...register('confirmPassword')}
+                  id="confirmPassword"
+                  name="confirmPassword"
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
                   placeholder="••••••••"
                   className={`input pl-10 ${errors.confirmPassword ? 'border-red-500' : ''}`}
                 />

@@ -1,4 +1,8 @@
-Please generate a complete movie script based on the following information:
+You are an award-winning screenwriter with expertise in {genre} films. Generate a professional, industry-standard screenplay based on the following:
+
+═══════════════════════════════════════════════════════════════
+PROJECT DETAILS
+═══════════════════════════════════════════════════════════════
 
 Title: {title}
 Genre: {genre}
@@ -7,28 +11,115 @@ Logline: {logline}
 Synopsis:
 {synopsis}
 
-Generate a professional screenplay with:
-1. Properly formatted scene headings (INT./EXT., LOCATION, TIME)
-2. Detailed scene descriptions with visual storytelling and atmospheric details
-3. Character dialogue with proper formatting and subtext
-4. Scene transitions
-5. For EACH scene, provide:
-   - MOOD: The emotional atmosphere and tone (e.g., tense, melancholic, joyful, mysterious)
-   - LIGHTING: Specific lighting setup and mood (e.g., "Low-key lighting with harsh shadows", "Golden hour natural light", "Fluorescent overhead creating sterile atmosphere")
-   - CAMERA: Suggested camera angles and movements
-6. At least 5-8 key scenes that tell the complete story
+═══════════════════════════════════════════════════════════════
+SCREENPLAY REQUIREMENTS
+═══════════════════════════════════════════════════════════════
 
-Provide the response in JSON format with:
-- synopsis: A brief 2-3 sentence summary
-- characters: Array of character objects with 'name' and 'description'
-- scenes: Array of scene objects with:
-  * 'heading': Scene heading (INT./EXT. LOCATION - TIME)
-  * 'description': Visual description of what happens
-  * 'dialogue': Array of dialogue objects with 'character' and 'line'
-  * 'action': Action lines
-  * 'mood': The emotional tone and atmosphere of the scene
-  * 'lighting': Specific lighting setup and suggestions
-  * 'camera_notes': Camera angle and movement suggestions
-- themes: Array of main themes
-- tone: Overall tone of the script
-- pacing: Description of the pacing
+**STRUCTURE:**
+- Follow THREE-ACT STRUCTURE:
+  * ACT I (Setup): Introduce characters, world, and inciting incident (25% of scenes)
+  * ACT II (Confrontation): Rising action, obstacles, midpoint twist (50% of scenes)
+  * ACT III (Resolution): Climax and resolution (25% of scenes)
+- Generate 12-18 detailed scenes for a feature-length screenplay
+- Include clear story beats: Inciting Incident, Plot Point 1, Midpoint, Plot Point 2, Climax, Resolution
+
+**CHARACTERS:**
+- Develop 3-6 main characters with distinct:
+  * Personality traits and flaws
+  * Clear motivations and goals
+  * Character arcs (how they change)
+  * Unique voice in dialogue
+- Include protagonist, antagonist (if applicable), and supporting characters
+
+**SCENE FORMATTING (Industry Standard):**
+- Scene headings: INT./EXT. LOCATION - TIME OF DAY
+- Detailed action lines (what we SEE and HEAR)
+- Character names in CAPS before dialogue
+- Parentheticals for delivery/action during dialogue
+- Scene transitions: CUT TO:, FADE TO:, DISSOLVE TO:, MATCH CUT TO:
+
+**VISUAL STORYTELLING (For Each Scene):**
+- MOOD: Emotional atmosphere (e.g., "Tense and claustrophobic", "Melancholic with underlying hope", "Energetic and chaotic")
+- LIGHTING: Specific setup (e.g., "Harsh overhead fluorescents creating sterile feel", "Golden hour backlight with lens flare", "Low-key noir lighting with deep shadows")
+- CAMERA: Angles and movements (e.g., "Wide establishing shot, dolly in to close-up", "Handheld POV following character", "Static long take", "Dutch angle for disorientation")
+- SOUND: Audio atmosphere (e.g., "Ambient city noise fades as tension builds", "Diegetic jazz from nearby bar")
+
+**DIALOGUE:**
+- Natural, character-specific speech patterns
+- Subtext (characters don't always say what they mean)
+- Avoid exposition dumps - show, don't tell
+- Include beats (pauses) for dramatic effect
+- Use parentheticals sparingly for clarity
+
+**{genre} GENRE SPECIFICS:**
+- Apply genre conventions and expectations
+- Include genre-appropriate pacing and tone
+- Genre-specific visual style and atmosphere
+- Meet audience expectations while adding unique elements
+
+═══════════════════════════════════════════════════════════════
+OUTPUT FORMAT (VALID JSON)
+═══════════════════════════════════════════════════════════════
+
+Return ONLY valid JSON with this exact structure:
+
+{{
+  "title": "{title}",
+  "genre": "{genre}",
+  "logline": "One-sentence premise",
+  "synopsis": "2-3 sentence summary of the complete story",
+  "themes": ["theme1", "theme2", "theme3"],
+  "tone": "Overall tone description",
+  "pacing": "Pacing description (e.g., 'Fast-paced thriller', 'Slow-burn character study')",
+  
+  "characters": [
+    {{
+      "name": "CHARACTER NAME",
+      "role": "protagonist/antagonist/supporting",
+      "description": "Physical description and personality",
+      "motivation": "What drives this character",
+      "arc": "How they change throughout the story",
+      "distinctive_trait": "Unique characteristic or quirk"
+    }}
+  ],
+  
+  "scenes": [
+    {{
+      "scene_number": 1,
+      "act": 1,
+      "heading": "INT./EXT. SPECIFIC LOCATION - TIME",
+      "story_beat": "Inciting Incident/Midpoint/Climax/etc.",
+      "description": "Detailed action lines - what we SEE happening",
+      "action": "Additional visual actions and blocking",
+      "dialogue": [
+        {{
+          "character": "CHARACTER NAME",
+          "line": "The actual dialogue",
+          "parenthetical": "(optional: delivery note)"
+        }}
+      ],
+      "mood": "Specific emotional atmosphere",
+      "lighting": "Detailed lighting description",
+      "camera_notes": "Camera angles, movements, and lens choice",
+      "sound_design": "Audio atmosphere and key sounds",
+      "transition": "CUT TO:/FADE TO:/DISSOLVE TO:/etc."
+    }}
+  ]
+}}
+
+═══════════════════════════════════════════════════════════════
+IMPORTANT REMINDERS
+═══════════════════════════════════════════════════════════════
+
+✓ Generate 12-18 complete scenes with full detail
+✓ Show character development and relationships
+✓ Build tension and emotional engagement
+✓ Use visual storytelling - show, don't tell
+✓ Make dialogue natural and purposeful
+✓ Include specific, filmable details
+✓ Vary shot types and camera work
+✓ Create memorable, cinematic moments
+✓ Ensure scenes connect and flow logically
+✓ End with satisfying resolution
+
+Generate the screenplay now:

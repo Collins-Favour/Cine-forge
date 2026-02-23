@@ -167,42 +167,12 @@ def create_project():
             if script_analysis:
                 print("✅ Script generation successful, creating script version...")
                 # Create formatted script content from analysis
-                script_content = f"# {data['title']}\n\n"
-                script_content += f"**Genre:** {data.get('genre', 'Drama')}\n"
-                script_content += f"**Logline:** {data.get('logline', '')}\n\n"
-                script_content += f"## SYNOPSIS\n\n{script_analysis.get('synopsis', data.get('synopsis', ''))}\n\n"
-                script_content += "## SCREENPLAY\n\n"
-                
-                # Add scenes from analysis with mood and lighting
-                if script_analysis.get('scenes'):
-                    for i, scene in enumerate(script_analysis['scenes'], 1):
-                        if isinstance(scene, dict):
-                            script_content += f"### SCENE {i}\n"
-                            script_content += f"**{scene.get('heading', f'INT. LOCATION - DAY')}**\n\n"
-                            
-                            # Add mood and lighting information
-                            if scene.get('mood'):
-                                script_content += f"**MOOD:** {scene.get('mood')}\n\n"
-                            
-                            if scene.get('lighting'):
-                                script_content += f"**LIGHTING:** {scene.get('lighting')}\n\n"
-                            
-                            if scene.get('camera_notes'):
-                                script_content += f"**CAMERA:** {scene.get('camera_notes')}\n\n"
-                            
-                            # Add description
-                            if scene.get('description'):
-                                script_content += f"{scene.get('description')}\n\n"
-                            
-                            # Add dialogue
-                            if scene.get('dialogue'):
-                                for dialogue_line in scene.get('dialogue', []):
-                                    if isinstance(dialogue_line, dict):
-                                        character = dialogue_line.get('character', 'CHARACTER')
-                                        line = dialogue_line.get('line', '')
-                                        script_content += f"**{character}**\n{line}\n\n"
-                        else:
-                            script_content += f"### SCENE {i}\n{scene}\n\n"
+                script_content = format_enhanced_screenplay(
+                    title=data['title'],
+                    genre=data.get('genre', 'Drama'),
+                    logline=data.get('logline', ''),
+                    script_analysis=script_analysis
+                )
                 
                 # Create first script version
                 script_version = ScriptVersion(
@@ -753,45 +723,13 @@ def generate_project_content(project_id):
         
         print(f"✅ Groq generated script with {len(script_analysis.get('scenes', []))} scenes")
         
-        # Create formatted script
-        script_content = f"# {project.title}\n\n"
-        script_content += f"**Genre:** {project.genre or 'Drama'}\n"
-        script_content += f"**Logline:** {project.logline or ''}\n\n"
-        script_content += f"## SYNOPSIS\n\n{script_analysis.get('synopsis', project.synopsis) or ''}\n\n"
-        script_content += "## SCREENPLAY\n\n"
-        
-        # Add scenes from analysis with mood and lighting
-        if script_analysis.get('scenes'):
-            for i, scene in enumerate(script_analysis['scenes'], 1):
-                if isinstance(scene, dict):
-                    script_content += f"### SCENE {i}\n"
-                    script_content += f"**{scene.get('heading', f'INT. LOCATION - DAY')}**\n\n"
-                    
-                    # Add mood and lighting information
-                    if scene.get('mood'):
-                        script_content += f"**MOOD:** {scene.get('mood')}\n\n"
-                    
-                    if scene.get('lighting'):
-                        script_content += f"**LIGHTING:** {scene.get('lighting')}\n\n"
-                    
-                    if scene.get('camera_notes'):
-                        script_content += f"**CAMERA:** {scene.get('camera_notes')}\n\n"
-                    
-                    # Add action/description
-                    if scene.get('description') or scene.get('action'):
-                        script_content += f"{scene.get('description') or scene.get('action')}\n\n"
-                    
-                    # Add dialogue
-                    if scene.get('dialogue'):
-                        for dialogue_line in scene.get('dialogue', []):
-                            if isinstance(dialogue_line, dict):
-                                character = dialogue_line.get('character', 'CHARACTER')
-                                line = dialogue_line.get('line', '')
-                                script_content += f"**{character}**\n{line}\n\n"
-                            else:
-                                script_content += f"{dialogue_line}\n\n"
-                else:
-                    script_content += f"### SCENE {i}\n{scene}\n\n"
+        # Create professionally formatted script with enhanced structure
+        script_content = format_enhanced_screenplay(
+            title=project.title,
+            genre=project.genre or 'Drama',
+            logline=project.logline or '',
+            script_analysis=script_analysis
+        )
         
         # Save script version
         from models import ScriptVersion
@@ -876,8 +814,8 @@ def generate_project_content(project_id):
                     db.session.add(panel)
                     db.session.flush()  # Get panel_id
                     
-                    # Immediately generate the actual image using Gemini Imagen
-                    print(f"🎨 Generating actual image with Gemini Imagen 3...")
+                    # Immediately generate the actual image
+                    print(f"🎨 Generating actual image with AI...")
                     generated_image = gemini_service.generate_image(
                         prompt=image_prompt,
                         negative_prompt="blurry, bad quality, distorted, text, watermark, low resolution"
@@ -887,7 +825,7 @@ def generate_project_content(project_id):
                         panel.generated_image_url = generated_image
                         panel.status = 'completed'
                         panel.generation_timestamp = db.func.now()
-                        panel.ai_model_used = 'Gemini Imagen 3'
+                        panel.ai_model_used = 'Pollinations.ai'
                         print(f"✅ Image generated and saved successfully!")
                         
                         # Log image generation
@@ -897,7 +835,7 @@ def generate_project_content(project_id):
                             operation_type='storyboard_image_generation',
                             input_data={'prompt': image_prompt, 'logline': project.logline, 'synopsis': project.synopsis},
                             output_data={'status': 'completed', 'has_image': True},
-                            ai_model='Gemini Imagen 3',
+                            ai_model='Pollinations.ai',
                             status='completed'
                         )
                         db.session.add(image_log)
@@ -930,4 +868,120 @@ def generate_project_content(project_id):
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Generation failed: {str(e)}'}), 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def format_enhanced_screenplay(title: str, genre: str, logline: str, script_analysis: dict) -> str:
+    """Format screenplay with enhanced structure including act breaks, character info, and visual details"""
+    
+    script = f"# {title}\n\n"
+    script += f"**Genre:** {genre}\n"
+    script += f"**Logline:** {logline}\n\n"
+    
+    # Add character section if available
+    if script_analysis.get('characters'):
+        script += "## CHARACTERS\n\n"
+        for char in script_analysis['characters']:
+            script += f"### {char.get('name', 'CHARACTER').upper()}\n"
+            script += f"**Role:** {char.get('role', 'Supporting').capitalize()}\n"
+            if char.get('description'):
+                script += f"**Description:** {char['description']}\n"
+            if char.get('motivation'):
+                script += f"**Motivation:** {char['motivation']}\n"
+            if char.get('arc'):
+                script += f"**Arc:** {char['arc']}\n"
+            script += "\\n"
+    
+    # Add synopsis
+    script += f"## SYNOPSIS\n\n{script_analysis.get('synopsis', '')}\n\n"
+    
+    # Add themes and tone
+    if script_analysis.get('themes'):
+        script += f"**Themes:** {', '.join(script_analysis['themes'])}\n"
+    if script_analysis.get('tone'):
+        script += f"**Tone:** {script_analysis['tone']}\n"
+    if script_analysis.get('pacing'):
+        script += f"**Pacing:** {script_analysis['pacing']}\n"
+    script += "\\n"
+    
+    # Add screenplay with act breaks
+    script += "## SCREENPLAY\n\n"
+    
+    current_act = None
+    for i, scene in enumerate(script_analysis.get('scenes', []), 1):
+        if not isinstance(scene, dict):
+            script += f"### SCENE {i}\n{scene}\n\n"
+            continue
+        
+        # Add act break if entering new act
+        scene_act = scene.get('act', 1)
+        if scene_act != current_act:
+            if scene_act == 1:
+                script += "═══════════════════════════════════════════════════════════════\n"
+                script += "ACT I - SETUP\n"
+                script += "═══════════════════════════════════════════════════════════════\n\n"
+            elif scene_act == 2:
+                script += "\\n═══════════════════════════════════════════════════════════════\n"
+                script += "ACT II - CONFRONTATION\n"
+                script += "═══════════════════════════════════════════════════════════════\n\n"
+            elif scene_act == 3:
+                script += "\\n═══════════════════════════════════════════════════════════════\n"
+                script += "ACT III - RESOLUTION\n"
+                script += "═══════════════════════════════════════════════════════════════\n\n"
+            current_act = scene_act
+        
+        # Scene number and story beat
+        scene_num = scene.get('scene_number', i)
+        script += f"### SCENE {scene_num}"
+        if scene.get('story_beat'):
+            script += f" - [{scene['story_beat']}]"
+        script += "\\n\\n"
+        
+        # Scene heading
+        script += f"**{scene.get('heading', 'INT. LOCATION - DAY')}**\n\n"
+        
+        # Production details section
+        script += "```\n"
+        script += f"MOOD: {scene.get('mood', 'Neutral')}\n"
+        script += f"LIGHTING: {scene.get('lighting', 'Natural lighting')}\n"
+        script += f"CAMERA: {scene.get('camera_notes', 'Medium shot')}\n"
+        if scene.get('sound_design'):
+            script += f"SOUND: {scene['sound_design']}\n"
+        script += "```\n\n"
+        
+        # Scene description/action
+        if scene.get('description'):
+            script += f"{scene['description']}\n\n"
+        
+        if scene.get('action') and scene.get('action') != scene.get('description'):
+            script += f"{scene['action']}\n\n"
+        
+        # Dialogue
+        if scene.get('dialogue'):
+            for dialogue_line in scene['dialogue']:
+                if isinstance(dialogue_line, dict):
+                    character = dialogue_line.get('character', 'CHARACTER').upper()
+                    script += f"**{character}**"
+                    
+                    # Add parenthetical if exists
+                    if dialogue_line.get('parenthetical'):
+                        script += f"\\n*({dialogue_line['parenthetical']})*"
+                    
+                    script += f"\\n{dialogue_line.get('line', '')}\n\n"
+                else:
+                    script += f"{dialogue_line}\n\n"
+        
+        # Scene transition
+        transition = scene.get('transition', 'CUT TO:')
+        script += f"*{transition}*\n\n"
+    
+    script += "\\n═══════════════════════════════════════════════════════════════\n"
+    script += "THE END\n"
+    script += "═══════════════════════════════════════════════════════════════\n"
+    
+    return script
+
 
