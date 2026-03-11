@@ -11,10 +11,12 @@ import {
   Calendar,
   Tag,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  Download
 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '@services/api'
+import { adminApi } from '@services/apiServices'
 import Modal, { ConfirmModal } from '@components/Modal'
 import toast from 'react-hot-toast'
 
@@ -25,6 +27,7 @@ export default function ProjectManagement() {
   const [page, setPage] = useState(1)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [selectedProject, setSelectedProject] = useState(null)
+  const [isExporting, setIsExporting] = useState(false)
 
   const { data, isLoading, refetch, isFetching } = useQuery(
     ['admin-projects', page, search],
@@ -64,6 +67,30 @@ export default function ProjectManagement() {
     }
   }
 
+  const handleExportProjects = async () => {
+    try {
+      setIsExporting(true)
+      const response = await adminApi.exportProjects()
+      
+      // Create blob and download
+      const blob = new Blob([response.data], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `projects_export_${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+      toast.success('Projects exported successfully')
+    } catch (error) {
+      console.error('Export failed:', error)
+      toast.error('Failed to export projects. Please try again.')
+    } finally {
+      setIsExporting(false)
+    }
+  }
+
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -99,15 +126,26 @@ export default function ProjectManagement() {
             <p className="text-dark-600">View and manage all platform projects</p>
           </div>
         </div>
-        <button
-          onClick={() => refetch()}
-          disabled={isFetching}
-          className="btn-secondary flex items-center gap-2"
-          title="Refresh projects"
-        >
-          <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">Refresh</span>
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="btn-secondary flex items-center gap-2"
+            title="Refresh projects"
+          >
+            <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Refresh</span>
+          </button>
+          <button
+            onClick={handleExportProjects}
+            disabled={isExporting}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export projects to CSV"
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">{isExporting ? 'Exporting...' : 'Export'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Search */}

@@ -3,14 +3,43 @@ Authentication Routes
 Handles user registration, login, logout, password reset
 """
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import (
+    create_access_token, create_refresh_token, 
+    jwt_required, get_jwt_identity, get_jwt
+)
 from models import db, User, UserSession
 from utils.validators import validate_email, validate_password
 from utils.decorators import validate_request
+from utils.logger import get_logger
 from datetime import datetime, timedelta
+from collections import defaultdict
 import secrets
+import time
 
 auth_bp = Blueprint('auth', __name__)
+logger = get_logger('cineforge.auth')
+
+# --- Simple in-memory rate limiter (no Redis dependency) ---
+_rate_limit_store = defaultdict(list)
+RATE_LIMIT_WINDOW = 60       # seconds
+RATE_LIMIT_MAX_ATTEMPTS = 10  # max attempts per IP per window
+
+def _check_rate_limit(ip_address):
+    """
+    Check if IP has exceeded rate limit.
+    Returns True if allowed, False if rate-limited.
+    """
+    now = time.time()
+    # Clean old entries
+    _rate_limit_store[ip_address] = [
+        t for t in _rate_limit_store[ip_address] if now - t < RATE_LIMIT_WINDOW
+    ]
+    
+    if len(_rate_limit_store[ip_address]) >= RATE_LIMIT_MAX_ATTEMPTS:
+        return False
+    
+    _rate_limit_store[ip_address].append(now)
+    return True
 
 
 @auth_bp.route('/register', methods=['POST'])
@@ -19,13 +48,22 @@ def register():
     """Register a new user"""
     data = request.get_json()
     
+    # Rate limiting
+    if not _check_rate_limit(request.remote_addr):
+        logger.warning(f"Rate limit exceeded for registration from IP {request.remote_addr}")
+        return jsonify({'error': 'Too many requests. Please wait before trying again.'}), 429
+    
+    logger.info(f"Registration attempt for email={data.get('email')}, username={data.get('username')}")
+    
     # Validate email format
     if not validate_email(data['email']):
+        logger.info(f"Registration rejected: invalid email format ({data.get('email')})")
         return jsonify({'error': 'Invalid email format'}), 400
     
     # Validate password strength
     is_valid, message = validate_password(data['password'])
     if not is_valid:
+        logger.info(f"Registration rejected: weak password for {data.get('email')}")
         return jsonify({'error': message}), 400
     
     # Check if user exists
@@ -59,9 +97,11 @@ def register():
     db.session.add(user)
     db.session.commit()
     
+    logger.info(f"User registered successfully: id={user.user_id}, email={user.email}, username={user.username}")
+    
     # Create JWT tokens for immediate login after registration
-    access_token = create_access_token(identity=user.user_id)
-    refresh_token = create_refresh_token(identity=user.user_id)
+    access_token = create_access_token(identity=str(user.user_id))
+    refresh_token = create_refresh_token(identity=str(user.user_id))
     
     # TODO: Send verification email
     
@@ -79,12 +119,21 @@ def login():
     """User login"""
     data = request.get_json()
     
+    # Rate limiting
+    if not _check_rate_limit(request.remote_addr):
+        logger.warning(f"Rate limit exceeded for login from IP {request.remote_addr}")
+        return jsonify({'error': 'Too many login attempts. Please wait before trying again.'}), 429
+    
+    logger.info(f"Login attempt for email={data.get('email')} from IP={request.remote_addr}")
+    
     user = User.query.filter_by(email=data['email']).first()
     
     if not user or not user.check_password(data['password']):
+        logger.warning(f"Failed login attempt for email={data.get('email')} from IP={request.remote_addr}")
         return jsonify({'error': 'Invalid email or password'}), 401
     
     if not user.is_active:
+        logger.warning(f"Login attempt on deactivated account: user_id={user.user_id}")
         return jsonify({'error': 'Account is deactivated'}), 403
     
     # Update last login
@@ -106,6 +155,8 @@ def login():
     db.session.add(session)
     db.session.commit()
     
+    logger.info(f"User logged in successfully: user_id={user.user_id}, email={user.email}")
+    
     return jsonify({
         'message': 'Login successful',
         'access_token': access_token,
@@ -119,19 +170,45 @@ def login():
 def refresh():
     """Refresh access token"""
     user_id = get_jwt_identity()
+    
+    # Verify the user still exists and is active
+    user = User.query.get(int(user_id))
+    if not user:
+        logger.warning(f"Token refresh failed: user {user_id} not found")
+        return jsonify({'error': 'User not found', 'error_code': 'user_not_found'}), 401
+    
+    if not user.is_active:
+        logger.warning(f"Token refresh failed: user {user_id} is deactivated")
+        return jsonify({'error': 'Account is deactivated', 'error_code': 'account_deactivated'}), 403
+    
     access_token = create_access_token(identity=user_id)
     
-    return jsonify({'access_token': access_token}), 200
+    logger.info(f"Token refreshed for user_id={user_id}")
+    
+    return jsonify({
+        'access_token': access_token,
+        'user': user.to_dict(include_email=True)
+    }), 200
 
 
 @auth_bp.route('/logout', methods=['POST'])
 @jwt_required()
 def logout():
-    """User logout"""
+    """User logout - clean up sessions"""
     user_id = get_jwt_identity()
     
-    # Invalidate sessions (optional - implement token blacklist if needed)
-    # For now, client-side token deletion is sufficient
+    try:
+        # Clean up expired/old sessions for this user
+        UserSession.query.filter(
+            UserSession.user_id == int(user_id),
+            UserSession.expires_at < datetime.utcnow()
+        ).delete()
+        db.session.commit()
+        
+        logger.info(f"User logged out: user_id={user_id}")
+    except Exception as e:
+        logger.error(f"Error during logout cleanup for user {user_id}: {e}")
+        db.session.rollback()
     
     return jsonify({'message': 'Logout successful'}), 200
 
@@ -142,6 +219,11 @@ def forgot_password():
     """Request password reset"""
     data = request.get_json()
     
+    # Rate limiting
+    if not _check_rate_limit(request.remote_addr):
+        logger.warning(f"Rate limit exceeded for password reset from IP {request.remote_addr}")
+        return jsonify({'error': 'Too many requests. Please wait before trying again.'}), 429
+    
     user = User.query.filter_by(email=data['email']).first()
     
     if user:
@@ -149,6 +231,7 @@ def forgot_password():
         user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
         db.session.commit()
         
+        logger.info(f"Password reset requested for user_id={user.user_id}")
         # TODO: Send reset email
     
     # Always return success to prevent email enumeration
@@ -176,6 +259,8 @@ def reset_password():
     user.reset_token_expiry = None
     db.session.commit()
     
+    logger.info(f"Password reset completed for user_id={user.user_id}")
+    
     return jsonify({'message': 'Password reset successful'}), 200
 
 
@@ -191,6 +276,8 @@ def verify_email(token):
     user.verification_token = None
     db.session.commit()
     
+    logger.info(f"Email verified for user_id={user.user_id}")
+    
     return jsonify({'message': 'Email verified successfully'}), 200
 
 
@@ -198,7 +285,7 @@ def verify_email(token):
 @jwt_required()
 def get_current_user():
     """Get current user info"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     user = User.query.get(user_id)
     
     if not user:

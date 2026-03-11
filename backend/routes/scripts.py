@@ -54,7 +54,7 @@ def get_script_version(project_id, version_id):
 @validate_request(['script_content'])
 def create_script_version(project_id):
     """Create new script version"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     # Get latest version number
@@ -95,7 +95,7 @@ def create_script_version(project_id):
 @project_permission_required('writer')
 def update_script_version(project_id, version_id):
     """Update script version"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     version = ScriptVersion.query.filter_by(
         version_id=version_id,
         project_id=project_id
@@ -134,7 +134,7 @@ def update_script_version(project_id, version_id):
 @project_permission_required('writer')
 def analyze_script(project_id, version_id):
     """Analyze script using AI"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     version = ScriptVersion.query.filter_by(
         version_id=version_id,
         project_id=project_id
@@ -195,7 +195,7 @@ def get_characters(project_id):
 @validate_request(['character_name'])
 def create_character(project_id):
     """Create new character"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     # Check if character already exists

@@ -40,8 +40,16 @@ class Project(db.Model):
     budget_items = db.relationship('BudgetItem', backref='project', lazy='dynamic', cascade='all, delete-orphan')
     ai_logs = db.relationship('AIProcessingLog', backref='project', lazy='dynamic', cascade='all, delete-orphan')
     
-    def to_dict(self, include_stats=False):
-        """Serialize project to dictionary"""
+    def to_dict(self, include_stats=False, stats_data=None):
+        """
+        Serialize project to dictionary
+        
+        Args:
+            include_stats: Whether to include statistics
+            stats_data: Pre-computed stats dict to avoid N+1 queries
+                       Format: {'total_scenes': int, 'total_characters': int, 
+                               'total_collaborators': int, 'latest_script_version': int}
+        """
         data = {
             'project_id': self.project_id,
             'title': self.title,
@@ -60,14 +68,18 @@ class Project(db.Model):
         }
         
         if include_stats:
-            # Get latest script version without importing ScriptVersion
-            latest_version = self.script_versions.order_by(db.desc('version_number')).first()
-            data['stats'] = {
-                'total_scenes': self.scenes.count(),
-                'total_characters': self.characters.count(),
-                'total_collaborators': self.collaborators.count(),
-                'latest_script_version': latest_version.version_number if latest_version else 0
-            }
+            if stats_data:
+                # Use pre-computed stats to avoid N+1 queries
+                data['stats'] = stats_data
+            else:
+                # Fallback to lazy loading (slower)
+                latest_version = self.script_versions.order_by(db.desc('version_number')).first()
+                data['stats'] = {
+                    'total_scenes': self.scenes.count(),
+                    'total_characters': self.characters.count(),
+                    'total_collaborators': self.collaborators.count(),
+                    'latest_script_version': latest_version.version_number if latest_version else 0
+                }
         
         return data
     

@@ -18,7 +18,7 @@ class StoryboardPanel(db.Model):
     style_reference = db.Column(db.String(255), comment='Art style: realistic, animated, sketch, etc.')
     
     # Generated images
-    generated_image_url = db.Column(db.String(500))
+    generated_image_url = db.Column(db.Text)
     thumbnail_url = db.Column(db.String(500))
     manual_image_url = db.Column(db.String(500), comment='User-uploaded alternative')
     

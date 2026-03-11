@@ -3,21 +3,28 @@ Utility Helper Functions
 """
 from models import db, ActivityLog
 from datetime import datetime
+from utils.logger import get_logger
+
+logger = get_logger('cineforge.db')
 
 
 def log_activity(project_id, user_id, activity_type, description, entity_type=None, entity_id=None, metadata=None):
     """Log activity to database"""
-    activity = ActivityLog(
-        project_id=project_id,
-        user_id=user_id,
-        activity_type=activity_type,
-        activity_description=description,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        metadata=metadata
-    )
-    db.session.add(activity)
-    return activity
+    try:
+        activity = ActivityLog(
+            project_id=project_id,
+            user_id=user_id,
+            activity_type=activity_type,
+            activity_description=description,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            activity_metadata=metadata  # Fixed: was 'metadata' which is not a model column
+        )
+        db.session.add(activity)
+        return activity
+    except Exception as e:
+        logger.error(f"Failed to log activity ({activity_type}): {e}", exc_info=True)
+        return None
 
 
 def paginate_query(query, page=1, per_page=20):

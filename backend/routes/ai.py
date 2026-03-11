@@ -38,7 +38,7 @@ def get_ai_logs(project_id):
 @jwt_required()
 def get_usage_analytics():
     """Get user usage analytics"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     days = request.args.get('days', 30, type=int)
     
     since_date = datetime.utcnow() - timedelta(days=days)
@@ -66,7 +66,7 @@ def get_usage_analytics():
 @jwt_required()
 def track_event():
     """Track analytics event"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     if not data or 'event_type' not in data:

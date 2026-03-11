@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, Search, Filter, FolderOpen, Users, Calendar, MoreVertical, Crown, UserCheck, ArrowLeft } from 'lucide-react'
+import { Plus, Search, Filter, FolderOpen, Users, Calendar, Crown, UserCheck, ArrowLeft } from 'lucide-react'
 import { useAuthStore } from '@store/authStore'
 import { projectsApi } from '@services/apiServices'
 
@@ -25,8 +25,12 @@ export default function Projects() {
       setLoading(true)
       setError(null)
       
+      console.log('🔄 Fetching projects...')
+      
       const response = await projectsApi.getProjects()
       const data = response.data
+      
+      console.log('✅ API Response:', data)
       
       // Ensure we're setting arrays, not undefined
       const projects = Array.isArray(data.projects) ? data.projects : []
@@ -40,7 +44,13 @@ export default function Projects() {
       setCollaboratedProjects(collaborated)
     } catch (err) {
       console.error('❌ Error fetching projects:', err)
-      const errorMsg = err.response?.data?.error || 'Unable to load projects. Please try again.'
+      console.error('❌ Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      })
+      
+      const errorMsg = err.response?.data?.error || err.message || 'Unable to load projects. Please try again.'
       setError(errorMsg)
       
       // Reset to empty arrays on error
@@ -108,8 +118,14 @@ export default function Projects() {
   return (
     <div className="max-w-7xl mx-auto">
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
           <p className="text-red-800">{error}</p>
+          <button
+            onClick={fetchProjects}
+            className="btn-secondary ml-4 text-sm"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -259,9 +275,6 @@ export default function Projects() {
                   <h3 className="font-semibold text-lg text-dark-900 group-hover:text-primary-600 transition-colors line-clamp-1">
                     {project.title}
                   </h3>
-                  <button className="text-dark-400 hover:text-dark-600 p-1">
-                    <MoreVertical className="w-5 h-5" />
-                  </button>
                 </div>
 
                 <p className="text-dark-600 text-sm line-clamp-2">{project.description || project.logline}</p>

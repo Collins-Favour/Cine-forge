@@ -5,7 +5,10 @@ import os
 import requests
 from typing import Dict, Any, Optional
 import json
+from utils.logger import get_logger
 
+
+logger = get_logger('cineforge.ai')
 
 class GroqService:
     """Service for interacting with Groq API for script analysis and NLP"""
@@ -35,13 +38,13 @@ class GroqService:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"Groq API error: {e}")
+            logger.error(f"Groq API error: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 try:
                     error_data = e.response.json()
-                    print(f"Error details: {error_data}")
+                    logger.error(f"Error details: {error_data}")
                 except:
-                    print(f"Error response text: {e.response.text}")
+                    logger.error(f"Error response text: {e.response.text}")
             return None
     
     def analyze_script(self, script_content: str) -> Optional[Dict]:
@@ -79,7 +82,7 @@ Provide the response in JSON format with keys: synopsis, characters (array), sce
                 if json_start != -1 and json_end > json_start:
                     return json.loads(content[json_start:json_end])
             except (json.JSONDecodeError, KeyError) as e:
-                print(f"Error parsing Groq response: {e}")
+                logger.error(f"Error parsing Groq response: {e}")
         
         return None
     
@@ -102,9 +105,9 @@ Provide the response in JSON format with keys: synopsis, characters (array), sce
         try:
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 prompt_template = f.read()
-            print("✅ Loaded enhanced script generation prompt from file")
+            logger.info(" Loaded enhanced script generation prompt from file")
         except Exception as e:
-            print(f"⚠️ Could not load prompt file: {e}, using fallback")
+            logger.warning(f"Could not load prompt file: {e}, using fallback")
             prompt_template = """Generate a professional {genre} screenplay for "{title}"
 Synopsis: {synopsis}
 Logline: {logline}
@@ -119,14 +122,14 @@ Return JSON with: title, genre, logline, synopsis, themes, tone, pacing, charact
             synopsis=synopsis
         )
         
-        print("\n" + "="*80)
-        print(f"📝 GENERATING {script_length.upper()} {genre.upper()} SCREENPLAY")
-        print("="*80)
-        print(f"Title: {title}")
-        print(f"Genre: {genre}")
-        print(f"Length: {script_length}")
-        print(f"Synopsis length: {len(synopsis)} chars")
-        print("="*80 + "\n")
+        logger.debug("\n" + "="*80)
+        logger.debug(f"GENERATING {script_length.upper()} {genre.upper()} SCREENPLAY")
+        logger.debug("="*80)
+        logger.debug(f"Title: {title}")
+        logger.debug(f"Genre: {genre}")
+        logger.debug(f"Length: {script_length}")
+        logger.debug(f"Synopsis length: {len(synopsis)} chars")
+        logger.debug("="*80 + "\n")
         
         # Genre-specific temperature and parameters
         genre_params = self._get_genre_parameters(genre)
@@ -145,15 +148,15 @@ Return JSON with: title, genre, logline, synopsis, themes, tone, pacing, charact
             "top_p": genre_params['top_p']
         }
         
-        print(f"🚀 Sending request to Groq API (Llama 3.3 70B Versatile)")
-        print(f"   Temperature: {genre_params['temperature']}, Top-P: {genre_params['top_p']}")
+        logger.debug(f"Sending request to Groq API (Llama 3.3 70B Versatile)")
+        logger.debug(f"Temperature: {genre_params['temperature']}, Top-P: {genre_params['top_p']}")
         
         result = self._make_request("chat/completions", payload)
         
         if result and 'choices' in result:
             try:
                 content = result['choices'][0]['message']['content']
-                print(f"📄 Groq response received ({len(content)} chars)")
+                logger.debug(f"Groq response received ({len(content)} chars)")
                 
                 # Multiple JSON extraction strategies
                 parsed = self._extract_and_parse_json(content)
@@ -161,24 +164,22 @@ Return JSON with: title, genre, logline, synopsis, themes, tone, pacing, charact
                 if parsed and parsed.get('scenes'):
                     scene_count = len(parsed['scenes'])
                     char_count = len(parsed.get('characters', []))
-                    print(f"✅ Successfully parsed screenplay:")
-                    print(f"   - {scene_count} scenes")
-                    print(f"   - {char_count} characters")
-                    print(f"   - {len(parsed.get('themes', []))} themes")
+                    logger.info(f"Successfully parsed screenplay:")
+                    logger.debug(f"- {scene_count} scenes")
+                    logger.debug(f"- {char_count} characters")
+                    logger.debug(f"- {len(parsed.get('themes', []))} themes")
                     
                     # Validate and enhance the structure
                     return self._validate_and_enhance_screenplay(parsed, title, genre, synopsis)
                 else:
-                    print(f"❌ No valid scenes in parsed response")
+                    logger.error(f"No valid scenes in parsed response")
                     return self._create_fallback_structure(title, genre, synopsis, content)
                     
             except Exception as e:
-                print(f"❌ Error processing Groq screenplay response: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Error processing Groq screenplay response: {e}", exc_info=True)
                 return self._create_fallback_structure(title, genre, synopsis, None)
         
-        print(f"❌ No valid result from Groq API")
+        logger.error(f"No valid result from Groq API")
         return self._create_fallback_structure(title, genre, synopsis, None)
     
     def _get_genre_parameters(self, genre: str) -> Dict[str, float]:
@@ -373,4 +374,162 @@ Provide response in JSON format."""
             except json.JSONDecodeError:
                 pass
         
+        return None
+
+    # ------------------------------------------------------------------
+    # Storyboard / scene text helpers (migrated from GeminiService)
+    # ------------------------------------------------------------------
+    def generate_storyboard_from_project(self, title: str, genre: str,
+                                         logline: str, synopsis: str) -> Optional[str]:
+        """Generate a detailed image-generation prompt from project metadata."""
+        import os
+        prompt_file = os.path.join(os.path.dirname(__file__), '..', 'prompts',
+                                   'direct_storyboard_generation.txt')
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            logger.info("Loaded direct storyboard generation prompt from file")
+        except Exception as e:
+            logger.warning(f"Could not load prompt file: {e}, using fallback")
+            prompt_template = (
+                "Create a cinematic opening shot for:\n\n"
+                "Title: {title}\nGenre: {genre}\nLogline: {logline}\nSynopsis: {synopsis}\n\n"
+                "Generate a detailed visual prompt for image generation that captures "
+                "the story's essence."
+            )
+
+        prompt = prompt_template.format(
+            title=title,
+            genre=genre or 'cinematic film',
+            logline=logline or 'Not provided',
+            synopsis=synopsis or 'Not provided',
+        )
+
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": "You are a storyboard artist and visual prompt engineer for film production. Generate detailed, vivid visual prompts suitable for AI image generation."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 800
+        }
+
+        result = self._make_request("chat/completions", payload)
+        if result and 'choices' in result:
+            text = result['choices'][0]['message']['content']
+            logger.info("Generated storyboard prompt from project info via Groq")
+            return text
+        logger.error("Groq returned empty response for storyboard prompt")
+        return None
+
+    def generate_storyboard_prompt(self, scene_description: str,
+                                   style: str = "cinematic") -> Optional[str]:
+        """Generate an optimised image-gen prompt from a scene description."""
+        import os
+        prompt_file = os.path.join(os.path.dirname(__file__), '..', 'prompts',
+                                   'storyboard_prompt_generation.txt')
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_template = f.read()
+            logger.info("Loaded storyboard prompt template from file")
+        except Exception as e:
+            logger.warning(f"Could not load prompt file: {e}, using fallback")
+            prompt_template = (
+                "Convert this scene description into a detailed visual prompt for "
+                "image generation.\n\nScene: {scene_description}\nStyle: {style}\n\n"
+                "Generate a single, detailed prompt suitable for image generation AI."
+            )
+
+        prompt = prompt_template.format(
+            scene_description=scene_description,
+            style=style,
+        )
+
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": "You are a visual prompt engineer. Convert scene descriptions into concise, vivid prompts optimised for AI image generation."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 600
+        }
+
+        result = self._make_request("chat/completions", payload)
+        if result and 'choices' in result:
+            text = result['choices'][0]['message']['content']
+            logger.info("Generated storyboard prompt via Groq")
+            return text
+        logger.error("Groq returned empty response for storyboard prompt")
+        return None
+
+    def analyze_scene_for_mood(self, scene_text: str) -> Optional[Dict]:
+        """Analyse a scene and suggest mood, lighting and atmosphere."""
+        prompt = (
+            "Analyze this film scene and provide:\n"
+            "1. Overall mood (one word)\n"
+            "2. Emotional tone\n"
+            "3. Lighting suggestions (time of day, natural/artificial, quality)\n"
+            "4. Color temperature (warm/cool/neutral)\n"
+            "5. Atmosphere description\n\n"
+            f"Scene: {scene_text}\n\n"
+            "Respond as valid JSON with keys: mood, emotional_tone, lighting, "
+            "color_temperature, atmosphere."
+        )
+
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": "You are a cinematographer and lighting designer for film. Always respond with valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 600
+        }
+
+        result = self._make_request("chat/completions", payload)
+        if result and 'choices' in result:
+            content = result['choices'][0]['message']['content']
+            try:
+                json_start = content.find('{')
+                json_end = content.rfind('}') + 1
+                if json_start != -1 and json_end > json_start:
+                    parsed = json.loads(content[json_start:json_end])
+                    parsed['status'] = 'success'
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+            return {
+                'analysis': content,
+                'status': 'success'
+            }
+        return None
+
+    def generate_character_description(self, character_name: str,
+                                       context: str) -> Optional[str]:
+        """Generate a detailed visual character description for storyboard art."""
+        prompt = (
+            f'Create a detailed visual description of the character "{character_name}" '
+            "for a storyboard artist.\nInclude:\n"
+            "- Physical appearance (age, build, height, distinctive features)\n"
+            "- Clothing and style\n"
+            "- Demeanour and body language\n"
+            "- How they should be portrayed visually\n\n"
+            f"Context: {context}"
+        )
+
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": "You are a character designer for film and animation."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 800
+        }
+
+        result = self._make_request("chat/completions", payload)
+        if result and 'choices' in result:
+            return result['choices'][0]['message']['content']
         return None

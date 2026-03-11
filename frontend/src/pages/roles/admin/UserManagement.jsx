@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { Users, Search, Filter, Edit2, Trash2, Shield, Lock, Mail, MoreVertical, UserPlus, Download, RefreshCw, ArrowLeft } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { adminApi } from '@services/apiServices'
-import { SuccessModal, ErrorModal, ConfirmModal, PromptModal } from '@components/Modal'
+import Modal, { SuccessModal, ErrorModal, ConfirmModal, PromptModal } from '@components/Modal'
 
 export default function UserManagement() {
   const navigate = useNavigate()
@@ -14,11 +14,14 @@ export default function UserManagement() {
   const [roleFilter, setRoleFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [selectedUser, setSelectedUser] = useState(null)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDeleteChoice, setShowDeleteChoice] = useState(false)
+  const [showFinalConfirm, setShowFinalConfirm] = useState(false)
+  const [actionType, setActionType] = useState('') // 'deactivate' or 'delete'
   const [showResetPassword, setShowResetPassword] = useState(false)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
   const [showErrorModal, setShowErrorModal] = useState(false)
   const [modalMessage, setModalMessage] = useState('')
+  const [isExporting, setIsExporting] = useState(false)
 
   const { data: usersData, isLoading, refetch } = useQuery(
     ['admin-users', page, search, roleFilter, statusFilter],
@@ -26,14 +29,45 @@ export default function UserManagement() {
     { keepPreviousData: true }
   )
 
+  const deactivateMutation = useMutation(
+    (userId) => adminApi.deactivateUser(userId),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('admin-users')
+        setModalMessage('User deactivated successfully')
+        setShowSuccessModal(true)
+        setShowFinalConfirm(false)
+      },
+      onError: () => {
+        setModalMessage('Failed to deactivate user')
+        setShowErrorModal(true)
+      }
+    }
+  )
+
+  const activateMutation = useMutation(
+    (userId) => adminApi.activateUser(userId),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries('admin-users')
+        setModalMessage('User activated successfully')
+        setShowSuccessModal(true)
+      },
+      onError: () => {
+        setModalMessage('Failed to activate user')
+        setShowErrorModal(true)
+      }
+    }
+  )
+
   const deleteMutation = useMutation(
     (userId) => adminApi.deleteUser(userId),
     {
       onSuccess: () => {
         queryClient.invalidateQueries('admin-users')
-        setModalMessage('User deleted successfully')
+        setModalMessage('User permanently deleted from database')
         setShowSuccessModal(true)
-        setShowDeleteConfirm(false)
+        setShowFinalConfirm(false)
       },
       onError: () => {
         setModalMessage('Failed to delete user')
@@ -57,9 +91,19 @@ export default function UserManagement() {
     }
   )
 
-  const handleDeleteUser = () => {
+  const handleActionChoice = (action) => {
+    setActionType(action)
+    setShowDeleteChoice(false)
+    setShowFinalConfirm(true)
+  }
+
+  const handleFinalConfirm = () => {
     if (selectedUser) {
-      deleteMutation.mutate(selectedUser.user_id)
+      if (actionType === 'deactivate') {
+        deactivateMutation.mutate(selectedUser.user_id)
+      } else if (actionType === 'delete') {
+        deleteMutation.mutate(selectedUser.user_id)
+      }
     }
   }
 
@@ -69,6 +113,30 @@ export default function UserManagement() {
         userId: selectedUser.user_id,
         password: newPassword
       })
+    }
+  }
+
+  const handleExportUsers = async () => {
+    try {
+      setIsExporting(true)
+      const response = await adminApi.exportUsers()
+      
+      // Create blob and download
+      const blob = new Blob([response.data], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `users_export_${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Export failed:', error)
+      setModalMessage('Failed to export users. Please try again.')
+      setShowErrorModal(true)
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -103,9 +171,13 @@ export default function UserManagement() {
             <RefreshCw className="w-4 h-4" />
             Refresh
           </button>
-          <button className="btn-primary flex items-center gap-2">
+          <button
+            onClick={handleExportUsers}
+            disabled={isExporting}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Download className="w-4 h-4" />
-            Export CSV
+            {isExporting ? 'Exporting...' : 'Export CSV'}
           </button>
         </div>
       </div>
@@ -245,16 +317,26 @@ export default function UserManagement() {
                           >
                             <Lock className="w-4 h-4 text-dark-600" />
                           </button>
-                          <button
-                            onClick={() => {
-                              setSelectedUser(user)
-                              setShowDeleteConfirm(true)
-                            }}
-                            className="p-2 hover:bg-red-100 rounded-lg transition-colors"
-                            title="Delete User"
-                          >
-                            <Trash2 className="w-4 h-4 text-red-600" />
-                          </button>
+                          {!user.is_active ? (
+                            <button
+                              onClick={() => activateMutation.mutate(user.user_id)}
+                              className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+                              title="Activate User"
+                            >
+                              <Shield className="w-4 h-4 text-green-600" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setSelectedUser(user)
+                                setShowDeleteChoice(true)
+                              }}
+                              className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                              title="Manage User"
+                            >
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -292,12 +374,72 @@ export default function UserManagement() {
       </div>
 
       {/* Modals */}
+      {/* Action Choice Modal */}
+      <Modal
+        isOpen={showDeleteChoice}
+        onClose={() => setShowDeleteChoice(false)}
+        title="User Action"
+        size="md"
+      >
+        <div className="p-6">
+          <p className="text-dark-700 mb-6">
+            Choose an action for <strong>{selectedUser?.full_name || selectedUser?.username}</strong>:
+          </p>
+          <div className="space-y-4">
+            <button
+              onClick={() => handleActionChoice('deactivate')}
+              className="w-full p-4 border-2 border-dark-200 rounded-lg hover:border-yellow-500 hover:bg-yellow-50 transition-all text-left"
+            >
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-yellow-100 rounded-lg">
+                  <Shield className="w-5 h-5 text-yellow-600" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-dark-900 mb-1">Deactivate Account</h4>
+                  <p className="text-sm text-dark-600">
+                    Temporarily disable the account. The user won't be able to log in, but all data remains in the database.
+                  </p>
+                </div>
+              </div>
+            </button>
+            <button
+              onClick={() => handleActionChoice('delete')}
+              className="w-full p-4 border-2 border-dark-200 rounded-lg hover:border-red-500 hover:bg-red-50 transition-all text-left"
+            >
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-red-100 rounded-lg">
+                  <Trash2 className="w-5 h-5 text-red-600" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-dark-900 mb-1">Permanently Delete</h4>
+                  <p className="text-sm text-dark-600">
+                    Remove user and all associated data from the database. This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+            </button>
+          </div>
+          <div className="flex justify-end mt-6">
+            <button onClick={() => setShowDeleteChoice(false)} className="btn-secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Final Confirmation Modal */}
       <ConfirmModal
-        isOpen={showDeleteConfirm}
-        onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={handleDeleteUser}
-        title="Delete User"
-        message={`Are you sure you want to delete ${selectedUser?.full_name}? This action cannot be undone.`}
+        isOpen={showFinalConfirm}
+        onClose={() => setShowFinalConfirm(false)}
+        onConfirm={handleFinalConfirm}
+        title={actionType === 'deactivate' ? 'Confirm Deactivation' : 'Confirm Deletion'}
+        message={
+          actionType === 'deactivate'
+            ? `Are you sure you want to deactivate ${selectedUser?.full_name || selectedUser?.username}? They will not be able to log in until reactivated.`
+            : `Are you sure you want to permanently delete ${selectedUser?.full_name || selectedUser?.username}? This will remove all their data from the database and cannot be undone.`
+        }
+        confirmText={actionType === 'deactivate' ? 'Deactivate' : 'Delete Permanently'}
+        variant="danger"
       />
 
       <PromptModal

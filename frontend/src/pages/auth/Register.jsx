@@ -14,7 +14,12 @@ const schema = yup.object().shape({
   last_name: yup.string().required('Last name is required'),
   email: yup.string().email('Invalid email').required('Email is required'),
   username: yup.string().min(3, 'Username must be at least 3 characters').required('Username is required'),
-  password: yup.string().min(6, 'Password must be at least 6 characters').required('Password is required'),
+  password: yup.string()
+    .min(8, 'Password must be at least 8 characters')
+    .matches(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .matches(/[a-z]/, 'Password must contain at least one lowercase letter')
+    .matches(/[0-9]/, 'Password must contain at least one digit')
+    .required('Password is required'),
   confirmPassword: yup.string().oneOf([yup.ref('password'), null], 'Passwords must match'),
 })
 
@@ -40,12 +45,17 @@ export default function Register() {
         role: 'filmmaker'
       })
       
-      const { user, access_token } = response.data
-      login(user, access_token)
+      const { user, access_token, refresh_token } = response.data
+      login(user, access_token, refresh_token)
       toast.success('Account created successfully!')
       navigate('/dashboard')
     } catch (error) {
-      toast.error(error.response?.data?.error || 'Registration failed')
+      const errMsg = error.response?.data?.error || 'Registration failed'
+      if (error.response?.status === 429) {
+        toast.error('Too many attempts. Please wait a moment.')
+      } else {
+        toast.error(errMsg)
+      }
     } finally {
       setIsLoading(false)
     }

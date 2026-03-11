@@ -4,81 +4,153 @@ Handles project CRUD operations and management
 """
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, Project, ProjectCollaborator, ActivityLog, User
+from sqlalchemy import or_, func
+from sqlalchemy.orm import selectinload, joinedload
+from models import db, Project, ProjectCollaborator, ActivityLog, User, Scene, Character, ScriptVersion
 from utils.decorators import validate_request, project_permission_required
 from utils.helpers import log_activity
+from utils.cache import cache_get, cache_set, cache_key, invalidate_project_cache
 from datetime import datetime
+from utils.logger import get_logger
 
 projects_bp = Blueprint('projects', __name__)
+logger = get_logger('cineforge.api')
 
 
 @projects_bp.route('', methods=['GET'])
 @jwt_required()
 def get_projects():
-    """Get all projects for current user"""
+    """Get all projects for current user with optimized queries"""
     try:
         user_id = int(get_jwt_identity())
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
         
-        print(f"📂 Fetching projects for user_id: {user_id} (type: {type(user_id).__name__})")
+        # Try cache first
+        cache_k = cache_key('projects', 'user', user_id, 'page', page, 'per_page', per_page)
+        cached_result = cache_get(cache_k)
+        if cached_result:
+            logger.debug(f"Using cached projects for user {user_id}")
+            return jsonify(cached_result), 200
         
-        # Get owned projects - explicitly filter by user_id
-        owned_projects_query = Project.query.filter(
-            Project.created_by == user_id,
-            Project.is_archived == False
-        )
-        owned_count = owned_projects_query.count()
-        print(f"   Owned projects: {owned_count}")
+        logger.debug(f"Fetching projects for user_id: {user_id} (type: {type(user_id).__name__})")
         
-        # Get collaborated projects - must have accepted invitation
+        # Get collaborated project IDs - must have accepted invitation
         collaborations = ProjectCollaborator.query.filter(
             ProjectCollaborator.user_id == user_id,
             ProjectCollaborator.invitation_status == 'accepted'
         ).all()
         collab_project_ids = [c.project_id for c in collaborations if c.project_id]
-        print(f"   Collaborated project IDs: {collab_project_ids}")
+        logger.debug(f"Collaborated project IDs: {collab_project_ids}")
         
-        # Build query based on whether there are collaborations
+        # Build query to get all projects (owned or collaborated) in one query
         if collab_project_ids:
-            collab_projects_query = Project.query.filter(
-                Project.project_id.in_(collab_project_ids),
+            # User owns OR is collaborator on the project
+            all_projects_query = Project.query.filter(
+                or_(
+                    Project.created_by == user_id,
+                    Project.project_id.in_(collab_project_ids)
+                ),
                 Project.is_archived == False
             )
-            # Combine owned and collaborated projects
-            all_projects_query = owned_projects_query.union(collab_projects_query)
         else:
             # Only owned projects
-            all_projects_query = owned_projects_query
+            all_projects_query = Project.query.filter(
+                Project.created_by == user_id,
+                Project.is_archived == False
+            )
         
         # Order and paginate
         all_projects = all_projects_query\
             .order_by(Project.updated_at.desc())\
             .paginate(page=page, per_page=per_page, error_out=False)
         
-        print(f"   Total projects returned: {len(all_projects.items)}")
+        logger.debug(f"Total projects returned: {len(all_projects.items)}")
         
-        # Get separate owned and collaborated projects for frontend
-        owned_projects = owned_projects_query.all()
+        # Bulk compute stats for all projects to avoid N+1 queries
+        project_ids = [p.project_id for p in all_projects.items]
+        
+        if project_ids:
+            # Get all stats in one query each
+            scene_counts = db.session.query(
+                Scene.project_id,
+                func.count(Scene.scene_id).label('count')
+            ).filter(Scene.project_id.in_(project_ids))\
+             .group_by(Scene.project_id).all()
+            
+            character_counts = db.session.query(
+                Character.project_id,
+                func.count(Character.character_id).label('count')
+            ).filter(Character.project_id.in_(project_ids))\
+             .group_by(Character.project_id).all()
+            
+            collaborator_counts = db.session.query(
+                ProjectCollaborator.project_id,
+                func.count(ProjectCollaborator.collaboration_id).label('count')
+            ).filter(ProjectCollaborator.project_id.in_(project_ids))\
+             .group_by(ProjectCollaborator.project_id).all()
+            
+            latest_versions = db.session.query(
+                ScriptVersion.project_id,
+                func.max(ScriptVersion.version_number).label('version')
+            ).filter(ScriptVersion.project_id.in_(project_ids))\
+             .group_by(ScriptVersion.project_id).all()
+            
+            # Create lookup dictionaries
+            scene_dict = {pid: count for pid, count in scene_counts}
+            character_dict = {pid: count for pid, count in character_counts}
+            collab_dict = {pid: count for pid, count in collaborator_counts}
+            version_dict = {pid: version for pid, version in latest_versions}
+        else:
+            scene_dict = {}
+            character_dict = {}
+            collab_dict = {}
+            version_dict = {}
+        
+        # Separate owned and collaborated projects for frontend
+        owned_projects = []
         collaborated_projects = []
-        if collab_project_ids:
-            collaborated_projects = collab_projects_query.all()
         
-        return jsonify({
-            'projects': [p.to_dict(include_stats=True) for p in all_projects.items],
-            'owned_projects': [p.to_dict(include_stats=True) for p in owned_projects],
-            'collaborated_projects': [p.to_dict(include_stats=True) for p in collaborated_projects],
+        for project in all_projects.items:
+            # Pre-compute stats for this project
+            stats_data = {
+                'total_scenes': scene_dict.get(project.project_id, 0),
+                'total_characters': character_dict.get(project.project_id, 0),
+                'total_collaborators': collab_dict.get(project.project_id, 0),
+                'latest_script_version': version_dict.get(project.project_id, 0)
+            }
+            
+            if project.created_by == user_id:
+                owned_projects.append(project.to_dict(include_stats=True, stats_data=stats_data))
+            else:
+                collaborated_projects.append(project.to_dict(include_stats=True, stats_data=stats_data))
+        
+        logger.debug(f"Owned: {len(owned_projects)}, Collaborated: {len(collaborated_projects)}")
+        
+        # Build all projects list with stats
+        all_projects_list = owned_projects + collaborated_projects
+        
+        result = {
+            'projects': all_projects_list,
+            'owned_projects': owned_projects,
+            'collaborated_projects': collaborated_projects,
             'pagination': {
                 'page': page,
                 'per_page': per_page,
                 'total': all_projects.total,
                 'pages': all_projects.pages
             }
-        }), 200
+        }
+        
+        # Cache for 2 minutes
+        cache_set(cache_k, result, timeout=120)
+        
+        return jsonify(result), 200
+    except ValueError as ve:
+        logger.error(f"ValueError in get_projects: {str(ve)}")
+        return jsonify({'error': 'Invalid user identity'}), 400
     except Exception as e:
-        print(f"❌ Error in get_projects: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error in get_projects: {str(e)}", exc_info=True)
         return jsonify({'error': f'Failed to fetch projects: {str(e)}'}), 500
 
 
@@ -86,13 +158,33 @@ def get_projects():
 @jwt_required()
 @project_permission_required('viewer')
 def get_project(project_id):
-    """Get project by ID"""
+    """Get project by ID with optimized stats"""
+    # Try cache first
+    cache_k = cache_key('project', project_id)
+    cached_result = cache_get(cache_k)
+    if cached_result:
+        return jsonify({'project': cached_result}), 200
+    
     project = Project.query.get(project_id)
     
     if not project:
         return jsonify({'error': 'Project not found'}), 404
     
-    return jsonify({'project': project.to_dict(include_stats=True)}), 200
+    # Compute stats in one query each
+    stats_data = {
+        'total_scenes': Scene.query.filter_by(project_id=project_id).count(),
+        'total_characters': Character.query.filter_by(project_id=project_id).count(),
+        'total_collaborators': ProjectCollaborator.query.filter_by(project_id=project_id).count(),
+        'latest_script_version': db.session.query(func.max(ScriptVersion.version_number))\
+            .filter(ScriptVersion.project_id == project_id).scalar() or 0
+    }
+    
+    project_data = project.to_dict(include_stats=True, stats_data=stats_data)
+    
+    # Cache for 5 minutes
+    cache_set(cache_k, project_data, timeout=300)
+    
+    return jsonify({'project': project_data}), 200
 
 
 @projects_bp.route('', methods=['POST'])
@@ -145,15 +237,15 @@ def create_project():
     # Auto-generate script and storyboard if synopsis/description provided
     script_generated = False
     if data.get('synopsis') or data.get('logline'):
-        print(f"🤖 Starting AI generation for project {project.project_id}...")
+        logger.info(f"Starting AI generation for project {project.project_id}...")
         try:
             from services import GroqService
             from models import ScriptVersion
             
-            print("📚 Initializing Groq service...")
+            logger.info(" Initializing Groq service...")
             groq_service = GroqService()
             
-            print("🎬 Generating screenplay with Groq AI...")
+            logger.debug(" Generating screenplay with Groq AI...")
             # Generate screenplay using Groq AI with mood and lighting suggestions
             script_analysis = groq_service.generate_screenplay(
                 title=data['title'],
@@ -162,10 +254,10 @@ def create_project():
                 logline=data.get('logline', '')
             )
             
-            print(f"📝 Script generation result: {script_analysis is not None}")
+            logger.debug(f"Script generation result: {script_analysis is not None}")
             
             if script_analysis:
-                print("✅ Script generation successful, creating script version...")
+                logger.info(" Script generation successful, creating script version...")
                 # Create formatted script content from analysis
                 script_content = format_enhanced_screenplay(
                     title=data['title'],
@@ -206,9 +298,9 @@ def create_project():
                 # Auto-generate scenes and ONE storyboard panel
                 if script_analysis.get('scenes'):
                     from models import Scene, StoryboardPanel
-                    from services import GeminiService
+                    from services import GroqService as _GroqService, ImageGenerationService
                     
-                    gemini_service = GeminiService()
+                    groq_svc = _GroqService()
                     
                     # Create all scenes
                     for i, scene_data in enumerate(script_analysis['scenes'], 1):
@@ -231,7 +323,7 @@ def create_project():
                         
                         # Generate storyboard prompt using title and synopsis
                         prompt_base = f"{data['title']}: {data.get('synopsis', data.get('logline', ''))}"
-                        image_prompt = gemini_service.generate_storyboard_prompt(
+                        image_prompt = groq_svc.generate_storyboard_prompt(
                             f"{prompt_base}\\n\\nOpening Scene: {scene_desc}",
                             style=data.get('genre', 'cinematic').lower()
                         )
@@ -256,13 +348,11 @@ def create_project():
                 db.session.commit()
         except Exception as e:
             # Don't fail project creation if AI generation fails
-            print(f"❌ AI generation error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"AI generation error: {e}", exc_info=True)
             db.session.rollback()
             db.session.commit()
     else:
-        print("⚠️  No synopsis or logline provided, skipping AI generation")
+        logger.warning(" No synopsis or logline provided, skipping AI generation")
     
     response_data = {
         'message': 'Project created successfully',
@@ -270,9 +360,13 @@ def create_project():
     }
     
     if script_generated:
-        print("✅ AI generation completed successfully!")
+        logger.info(" AI generation completed successfully!")
         response_data['message'] += ' with AI-generated script and storyboard'
         response_data['ai_generated'] = True
+    
+    # Invalidate user's project cache
+    from utils.cache import invalidate_user_cache
+    invalidate_user_cache(user_id)
     
     return jsonify(response_data), 201
 
@@ -283,7 +377,7 @@ def create_project():
 def update_project(project_id):
     """Update project"""
     project = Project.query.get(project_id)
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     if not project:
         return jsonify({'error': 'Project not found'}), 404
@@ -314,6 +408,11 @@ def update_project(project_id):
     
     db.session.commit()
     
+    # Invalidate caches
+    invalidate_project_cache(project_id)
+    from utils.cache import invalidate_user_cache
+    invalidate_user_cache(project.created_by)
+    
     return jsonify({
         'message': 'Project updated successfully',
         'project': project.to_dict()
@@ -326,13 +425,18 @@ def update_project(project_id):
 def delete_project(project_id):
     """Delete project (soft delete)"""
     project = Project.query.get(project_id)
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     if not project:
         return jsonify({'error': 'Project not found'}), 404
     
     project.is_archived = True
     db.session.commit()
+    
+    # Invalidate caches
+    invalidate_project_cache(project_id)
+    from utils.cache import invalidate_user_cache
+    invalidate_user_cache(project.created_by)
     
     return jsonify({'message': 'Project archived successfully'}), 200
 
@@ -363,7 +467,7 @@ def get_collaborators(project_id):
 def add_collaborator(project_id):
     """Add collaborator to project"""
     data = request.get_json()
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
 
     # Support inviting by `email` (recommended) or by `user_id` (legacy)
     target_user = None
@@ -398,22 +502,48 @@ def add_collaborator(project_id):
     db.session.add(collaborator)
     db.session.flush()  # Get the collaboration_id
     
+    logger.debug(f"Creating collaboration invite: project_id={project_id}, invited_user_id={target_user.user_id}, inviter_id={user_id}, collaboration_id={collaborator.collaboration_id}")
+    
     # Create an in-app notification for the invited user
     try:
+        import json
         from models import Notification
         project = Project.query.get(project_id)
         inviter = User.query.get(user_id)
+        
+        logger.debug(f"Creating notification for user_id={target_user.user_id} (email: {target_user.email})")
+        
         notif = Notification(
             user_id=target_user.user_id,
             notification_type='collaboration_invite',
             title=f"You've been invited to collaborate on {project.title}",
             message=f"{inviter.username} invited you to join the project as {data['role']}",
             link_url=f'/projects/{project_id}',
-            action_data=f'{{"collaboration_id": {collaborator.collaboration_id}, "project_id": {project_id}}}'
+            action_data=json.dumps({
+                'collaboration_id': collaborator.collaboration_id,
+                'project_id': project_id,
+                'invited_by': user_id,
+                'role': data['role']
+            })
         )
         db.session.add(notif)
+        db.session.flush()
+        
+        logger.info(f"Notification created: notification_id={notif.notification_id}")
+        
+        # Send real-time notification via socket if available
+        try:
+            from app import socketio
+            socketio.emit('new_notification', {
+                'notification': notif.to_dict(),
+                'user_id': target_user.user_id
+            }, room=f'user_{target_user.user_id}')
+            logger.debug(f"Real-time notification sent to user_{target_user.user_id}")
+        except Exception as socket_err:
+            logger.error(f"Socket notification failed (non-critical): {socket_err}")
+            
     except Exception as e:
-        print(f"❌ Error creating notification: {e}")
+        logger.error(f"Error creating notification: {e}", exc_info=True)
         # If Notification model or DB insert fails, continue without blocking invite
         pass
 
@@ -457,6 +587,8 @@ def respond_to_invitation(project_id, collaboration_id):
     data = request.get_json()
     response = data['response']  # 'accept' or 'decline'
     
+    logger.debug(f"User {user_id} responding to invitation: collaboration_id={collaboration_id}, response={response}")
+    
     if response not in ['accept', 'decline']:
         return jsonify({'error': 'Response must be "accept" or "decline"'}), 400
     
@@ -464,31 +596,37 @@ def respond_to_invitation(project_id, collaboration_id):
     collaborator = ProjectCollaborator.query.get(collaboration_id)
     
     if not collaborator:
+        logger.error(f"Collaboration {collaboration_id} not found")
         return jsonify({'error': 'Invitation not found'}), 404
     
     # Verify this invitation is for the current user
     if collaborator.user_id != user_id:
+        logger.error(f"User {user_id} tried to respond to invitation for user {collaborator.user_id}")
         return jsonify({'error': 'This invitation is not for you'}), 403
     
     # Verify invitation is still pending
     if collaborator.invitation_status != 'pending':
+        logger.warning(f"Invitation already {collaborator.invitation_status}")
         return jsonify({'error': f'Invitation already {collaborator.invitation_status}'}), 409
     
     if response == 'accept':
         collaborator.invitation_status = 'accepted'
         collaborator.joined_at = datetime.utcnow()
         log_activity(project_id, user_id, 'collaboration_accepted', f'User accepted collaboration invitation')
-        message = 'Invitation accepted'
+        message = 'Invitation accepted successfully! You can now access the project.'
+        logger.info(f"User {user_id} accepted invitation to project {project_id}")
     else:
         collaborator.invitation_status = 'declined'
         log_activity(project_id, user_id, 'collaboration_declined', f'User declined collaboration invitation')
         message = 'Invitation declined'
+        logger.error(f"User {user_id} declined invitation to project {project_id}")
     
     db.session.commit()
     
     return jsonify({
         'message': message,
-        'collaborator': collaborator.to_dict()
+        'collaborator': collaborator.to_dict(),
+        'status': collaborator.invitation_status
     }), 200
 
 
@@ -498,7 +636,7 @@ def respond_to_invitation(project_id, collaboration_id):
 def remove_collaborator(project_id, collaboration_id):
     """Remove collaborator from project"""
     collaborator = ProjectCollaborator.query.get(collaboration_id)
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     if not collaborator or collaborator.project_id != project_id:
         return jsonify({'error': 'Collaborator not found'}), 404
@@ -521,7 +659,7 @@ def remove_collaborator(project_id, collaboration_id):
 def update_collaborator_role(project_id, collaboration_id):
     """Update a collaborator's role (owners only). Direct ownership transfer is not allowed here."""
     data = request.get_json()
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
 
     allowed_roles = ['owner', 'director', 'writer', 'editor', 'viewer']
     new_role = data.get('role')
@@ -569,7 +707,7 @@ def transfer_project_ownership(project_id):
     and update `project.created_by` to the new owner's user_id. Notifications should be sent separately.
     """
     data = request.get_json()
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
 
     project = Project.query.get(project_id)
     if not project:
@@ -619,7 +757,7 @@ def transfer_project_ownership(project_id):
 @project_permission_required('viewer')
 def get_project_activity(project_id):
     """Get activity log for project"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     # Check if user has access to this project
     project = Project.query.get(project_id)
@@ -696,17 +834,17 @@ def generate_project_content(project_id):
     if not synopsis_content:
         return jsonify({'error': 'Project must have a synopsis or logline for AI generation'}), 400
     
-    print(f"🎬 Starting content generation for project: {project.title}")
-    print(f"📝 Synopsis: {synopsis_content[:100]}...")
+    logger.info(f"Starting content generation for project: {project.title}")
+    logger.debug(f"Synopsis: {synopsis_content[:100]}...")
     
     try:
         # Initialize AI services
-        from services import GroqService, GeminiService
+        from services import GroqService, ImageGenerationService
         groq_service = GroqService()
-        gemini_service = GeminiService()
+        image_service = ImageGenerationService()
         
         # 1. Generate script using Groq
-        print("🤖 Calling Groq API to generate screenplay...")
+        logger.debug(" Calling Groq API to generate screenplay...")
         script_analysis = groq_service.generate_screenplay(
             title=project.title,
             synopsis=synopsis_content,
@@ -715,13 +853,13 @@ def generate_project_content(project_id):
         )
         
         if not script_analysis or not script_analysis.get('scenes'):
-            print("❌ Groq API returned no scenes or invalid data")
-            print(f"Script analysis: {script_analysis}")
+            logger.error(" Groq API returned no scenes or invalid data")
+            logger.debug(f"Script analysis: {script_analysis}")
             return jsonify({
                 'error': 'Script generation failed. The AI returned invalid data. Please try again or provide more details in your synopsis.'
             }), 500
         
-        print(f"✅ Groq generated script with {len(script_analysis.get('scenes', []))} scenes")
+        logger.info(f"Groq generated script with {len(script_analysis.get('scenes', []))} scenes")
         
         # Create professionally formatted script with enhanced structure
         script_content = format_enhanced_screenplay(
@@ -780,27 +918,27 @@ def generate_project_content(project_id):
             first_scene = Scene.query.filter_by(project_id=project_id, scene_number=1).first()
             if first_scene:
                 try:
-                    print("🧠 Using INTELLIGENT storyboard generation (Gemini-based)...")
-                    print("   Analyzing project directly from logline and synopsis...")
+                    logger.debug(" Using INTELLIGENT storyboard generation (Groq-based)...")
+                    logger.debug(" Analyzing project directly from logline and synopsis...")
                     
                     # Use intelligent generation that doesn't rely on Groq script
-                    image_prompt = gemini_service.generate_storyboard_from_project(
+                    image_prompt = groq_service.generate_storyboard_from_project(
                         title=project.title,
                         genre=project.genre or 'Drama',
                         logline=project.logline or '',
                         synopsis=project.synopsis or ''
                     )
                     
-                    # Fallback if Gemini fails
+                    # Fallback if Groq fails
                     if not image_prompt:
-                        print("⚠️ Intelligent generation failed, using fallback")
+                        logger.error(" Intelligent generation failed, using fallback")
                         first_scene_data = script_analysis['scenes'][0]
                         scene_desc = first_scene_data.get('description', str(first_scene_data)) if isinstance(first_scene_data, dict) else str(first_scene_data)
                         image_prompt = f"Cinematic {project.genre or 'film'} opening scene: {project.logline or project.synopsis[:200]}"
                     
-                    print(f"✅ Final image prompt ({len(image_prompt)} chars):")
-                    print(f"   {image_prompt}")
-                    print(f"   ---")
+                    logger.info(f"Final image prompt ({len(image_prompt)} chars):")
+                    logger.debug(f"{image_prompt}")
+                    logger.debug(f"---")
                     
                     # Create panel with pending status first
                     panel = StoryboardPanel(
@@ -815,18 +953,18 @@ def generate_project_content(project_id):
                     db.session.flush()  # Get panel_id
                     
                     # Immediately generate the actual image
-                    print(f"🎨 Generating actual image with AI...")
-                    generated_image = gemini_service.generate_image(
+                    logger.debug(f"Generating actual image with AI...")
+                    generated_image = image_service.generate_image(
                         prompt=image_prompt,
-                        negative_prompt="blurry, bad quality, distorted, text, watermark, low resolution"
+                        negative_prompt="blurry, bad quality, distorted, watermark, low resolution"
                     )
                     
                     if generated_image:
                         panel.generated_image_url = generated_image
                         panel.status = 'completed'
                         panel.generation_timestamp = db.func.now()
-                        panel.ai_model_used = 'Pollinations.ai'
-                        print(f"✅ Image generated and saved successfully!")
+                        panel.ai_model_used = 'Gemini Imagen 4'
+                        logger.info(f"Image generated and saved successfully!")
                         
                         # Log image generation
                         image_log = AIProcessingLog(
@@ -835,21 +973,19 @@ def generate_project_content(project_id):
                             operation_type='storyboard_image_generation',
                             input_data={'prompt': image_prompt, 'logline': project.logline, 'synopsis': project.synopsis},
                             output_data={'status': 'completed', 'has_image': True},
-                            ai_model='Pollinations.ai',
+                            ai_model='Gemini Imagen 4',
                             status='completed'
                         )
                         db.session.add(image_log)
                     else:
                         panel.status = 'failed'
-                        print(f"❌ Image generation failed")
+                        logger.error(f"Image generation failed")
                     
                     panels_created = 1
-                    print(f"✅ Created 1 storyboard panel with {'generated image' if generated_image else 'pending image'}")
+                    logger.info(f"Created 1 storyboard panel with {'generated image' if generated_image else 'pending image'}")
                     
                 except Exception as panel_error:
-                    print(f"❌ Error creating/generating storyboard panel: {panel_error}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.error(f"Error creating/generating storyboard panel: {panel_error}", exc_info=True)
         
         log_activity(project_id, user_id, 'content_generated',
                     f'Generated script with {scenes_created} scenes and {panels_created} storyboard panels')
@@ -865,8 +1001,6 @@ def generate_project_content(project_id):
         
     except Exception as e:
         db.session.rollback()
-        import traceback
-        traceback.print_exc()
         return jsonify({'error': f'Generation failed: {str(e)}'}), 500
 
 

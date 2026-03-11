@@ -9,11 +9,35 @@ import { adminApi } from '@services/apiServices'
 export default function Analytics() {
   const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState(30)
+  const [isExporting, setIsExporting] = useState(false)
 
   const { data: analyticsData, isLoading } = useQuery(
     ['admin-analytics', timeRange],
     () => adminApi.getAnalytics(timeRange)
   )
+
+  const handleExportReport = async () => {
+    try {
+      setIsExporting(true)
+      const response = await adminApi.exportAnalytics(timeRange)
+      
+      // Create blob and download
+      const blob = new Blob([response.data], { type: 'text/csv' })
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `analytics_report_${new Date().toISOString().split('T')[0]}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Export failed:', error)
+      alert('Failed to export report. Please try again.')
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   const analytics = analyticsData?.data || {}
   const newUsers = analytics.new_users || []
@@ -51,9 +75,13 @@ export default function Analytics() {
             <option value={90}>Last 90 Days</option>
             <option value={365}>Last Year</option>
           </select>
-          <button className="btn-primary flex items-center gap-2">
+          <button 
+            onClick={handleExportReport}
+            disabled={isExporting}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Download className="w-4 h-4" />
-            Export Report
+            {isExporting ? 'Exporting...' : 'Export Report'}
           </button>
         </div>
       </div>

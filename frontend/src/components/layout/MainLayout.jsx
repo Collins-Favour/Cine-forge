@@ -12,17 +12,19 @@ import {
   Users,
   Activity
 } from 'lucide-react'
-import { useState } from 'react'
-import { useQuery } from 'react-query'
+import { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from 'react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuthStore } from '@store/authStore'
 import api from '@services/api'
+import socketService from '@services/socketService'
 
 export default function MainLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const location = useLocation()
   const { user, logout } = useAuthStore()
+  const queryClient = useQueryClient()
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -38,21 +40,104 @@ export default function MainLayout() {
 
   const isActive = (path) => location.pathname === path
 
-  // Fetch notifications
-  const { data: notificationsData } = useQuery(
+  // Fetch notifications with optimized real-time settings
+  const { data: notificationsData, isLoading: notificationsLoading, error: notificationsError, refetch: refetchNotifications } = useQuery(
     'notifications',
     async () => {
-      const response = await api.get('/collaboration/notifications?unread_only=true')
-      return response.data
+      console.log('🔔 Fetching notifications for user:', user)
+      try {
+        const response = await api.get('/collaboration/notifications?unread_only=true')
+        console.log('📬 Notifications response:', response.data)
+        return response.data
+      } catch (error) {
+        console.error('❌ API Error:', error.response?.data || error.message)
+        throw error
+      }
     },
     {
       enabled: !!user?.user_id,
-      refetchInterval: 30000, // Refetch every 30 seconds
+      refetchInterval: 10000, // Refetch every 10 seconds for instant updates
+      refetchOnWindowFocus: true,
+      refetchOnMount: true,
+      staleTime: 5000, // Consider data stale after 5 seconds
+      cacheTime: 30000, // Keep in cache for 30 seconds
+      retry: 3,
+      retryDelay: 1000,
+      onError: (error) => {
+        console.error('❌ Error fetching notifications:', error)
+        console.error('   User:', user)
+        console.error('   Response:', error.response?.data)
+      },
+      onSuccess: (data) => {
+        console.log('✅ Notifications loaded successfully:', data)
+      }
     }
   )
 
+  console.log('📊 Notifications state:', { 
+    data: notificationsData, 
+    loading: notificationsLoading, 
+    error: notificationsError,
+    user: user 
+  })
+
   const notifications = notificationsData?.notifications || []
   const unreadCount = notifications.length
+
+  // Listen for real-time notifications via socket with instant updates
+  useEffect(() => {
+    if (!user?.user_id) {
+      console.log('⚠️ No user logged in, skipping socket connection')
+      return
+    }
+
+    console.log('🔌 Connecting socket for user:', user.user_id)
+    
+    // Connect socket
+    socketService.connect()
+
+    // Listen for new notifications
+    const handleNewNotification = (data) => {
+      console.log('🔔 REAL-TIME: New notification received:', data)
+      
+      // Immediately refetch notifications for instant update
+      refetchNotifications()
+      
+      // Also invalidate for background refresh
+      queryClient.invalidateQueries('notifications')
+      
+      // Show browser notification if supported
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(data.notification.title, {
+          body: data.notification.message,
+          icon: '/favicon.ico',
+          tag: 'cineforge-notification',
+          requireInteraction: true
+        })
+      }
+    }
+
+    socketService.on('new_notification', handleNewNotification)
+    socketService.on('connected', () => {
+      console.log('✅ Socket connected successfully')
+    })
+    socketService.on('error', (error) => {
+      console.error('❌ Socket error:', error)
+    })
+
+    // Request browser notification permission
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        console.log('🔔 Notification permission:', permission)
+      })
+    }
+
+    return () => {
+      socketService.off('new_notification', handleNewNotification)
+      socketService.off('connected')
+      socketService.off('error')
+    }
+  }, [user?.user_id, queryClient, refetchNotifications])
 
   const handleNotificationClick = async (notification) => {
     // Mark as read
@@ -73,15 +158,31 @@ export default function MainLayout() {
       const actionData = JSON.parse(notification.action_data || '{}')
       const { collaboration_id, project_id } = actionData
       
-      await api.post(`/projects/${project_id}/collaborators/${collaboration_id}/respond`, {
+      console.log(`Responding to invitation: ${response}`, { collaboration_id, project_id })
+      
+      const result = await api.post(`/projects/${project_id}/collaborators/${collaboration_id}/respond`, {
         response: response
       })
       
       // Mark notification as read
       await api.post(`/collaboration/notifications/${notification.notification_id}/read`)
       
-      // Refresh notifications
-      window.location.reload()
+      // Invalidate queries to refresh data
+      queryClient.invalidateQueries('notifications')
+      queryClient.invalidateQueries('projects')
+      
+      // Show success message
+      if (response === 'accept') {
+        alert('✅ Invitation accepted! You can now access the project.')
+        // Optionally redirect to project
+        setTimeout(() => {
+          window.location.href = `/projects/${project_id}`
+        }, 1000)
+      } else {
+        alert('Invitation declined')
+        setNotificationsOpen(false)
+      }
+      
     } catch (error) {
       console.error('Error responding to invitation:', error)
       alert(error.response?.data?.error || 'Failed to respond to invitation')
@@ -177,13 +278,35 @@ export default function MainLayout() {
             
             {/* Notifications */}
             <div className="relative">
+              {/* Manual refresh button for testing */}
               <button
-                onClick={() => setNotificationsOpen(!notificationsOpen)}
+                onClick={() => {
+                  console.log('🔄 Manual refresh triggered')
+                  refetchNotifications()
+                }}
+                className="mr-2 p-2 text-dark-600 hover:text-dark-900 hover:bg-dark-200 rounded-lg transition-colors"
+                title="Refresh notifications"
+              >
+                <Activity className="w-5 h-5" />
+              </button>
+              
+              <button
+                onClick={() => {
+                  setNotificationsOpen(!notificationsOpen)
+                  console.log('🔔 Notifications clicked. State:', { 
+                    notifications, 
+                    unreadCount,
+                    user: user,
+                    loading: notificationsLoading,
+                    error: notificationsError
+                  })
+                }}
                 className="relative p-2 text-dark-600 hover:text-dark-900 hover:bg-dark-200 rounded-lg transition-colors"
+                title={`${unreadCount} unread notification${unreadCount !== 1 ? 's' : ''}`}
               >
                 <Bell className="w-6 h-6" />
                 {unreadCount > 0 && (
-                  <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold">
+                  <span className="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold animate-pulse">
                     {unreadCount}
                   </span>
                 )}

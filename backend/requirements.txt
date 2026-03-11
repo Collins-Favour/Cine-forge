@@ -12,8 +12,8 @@ psycopg2-binary==2.9.9
 cryptography==41.0.7
 SQLAlchemy==2.0.23
 
-# AI & Machine Learning - Groq and Gemini only
-google-generativeai==0.3.2
+# AI & Machine Learning - Groq and Gemini Imagen
+google-genai>=1.0.0
 Pillow==10.1.0
 
 # Real-time Communication

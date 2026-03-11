@@ -7,8 +7,10 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, CSpaceMessage, MessageReaction, Notification
 from utils.decorators import validate_request, project_permission_required
 from utils.helpers import paginate_query
+from utils.logger import get_logger
 from datetime import datetime
 
+logger = get_logger('cineforge.api')
 collaboration_bp = Blueprint('collaboration', __name__)
 
 
@@ -49,7 +51,7 @@ def get_messages(project_id):
 @validate_request(['message_content'])
 def create_message(project_id):
     """Create new C-Space message"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     message = CSpaceMessage(
@@ -69,12 +71,24 @@ def create_message(project_id):
     db.session.add(message)
     db.session.commit()
     
-    # Notify project collaborators (except sender)
+    # Get sender info for broadcasting
     from models import ProjectCollaborator, User
+    sender = User.query.get(user_id)
+    
+    # Broadcast message via SocketIO
+    from flask import current_app
+    socketio = current_app.extensions.get('socketio')
+    if socketio:
+        room = f'project_{project_id}'
+        socketio.emit('new_message', {
+            'message': message.to_dict(),
+            'user': sender.to_dict() if sender else None
+        }, room=room)
+    
+    # Notify project collaborators (except sender)
     collaborators = ProjectCollaborator.query.filter_by(project_id=project_id)\
         .filter(ProjectCollaborator.user_id != user_id).all()
     
-    sender = User.query.get(user_id)
     for collab in collaborators:
         notification = Notification(
             user_id=collab.user_id,
@@ -97,7 +111,7 @@ def create_message(project_id):
 @jwt_required()
 def update_message(message_id):
     """Edit message"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     message = CSpaceMessage.query.get(message_id)
     
     if not message:
@@ -131,7 +145,7 @@ def update_message(message_id):
 @jwt_required()
 def delete_message(message_id):
     """Delete message"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     message = CSpaceMessage.query.get(message_id)
     
     if not message:
@@ -160,7 +174,7 @@ def delete_message(message_id):
 @validate_request(['reaction_type'])
 def add_reaction(message_id):
     """Add reaction to message"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     message = CSpaceMessage.query.get(message_id)
@@ -196,7 +210,7 @@ def add_reaction(message_id):
 @jwt_required()
 def remove_reaction(message_id, reaction_id):
     """Remove reaction from message"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     reaction = MessageReaction.query.filter_by(
         reaction_id=reaction_id,
@@ -222,7 +236,7 @@ def get_notifications():
     per_page = request.args.get('per_page', 20, type=int)
     unread_only = request.args.get('unread_only', 'false').lower() == 'true'
     
-    print(f"📬 Fetching notifications for user_id: {user_id}")
+    logger.debug(f"Fetching notifications for user_id: {user_id}, unread_only: {unread_only}")
     
     query = Notification.query.filter(Notification.user_id == user_id)
     
@@ -233,8 +247,14 @@ def get_notifications():
     
     result = paginate_query(query, page, per_page)
     
+    notifications_list = [n.to_dict() for n in result['items']]
+    logger.debug(f"Returning {len(notifications_list)} notifications to user {user_id}")
+    
+    if notifications_list:
+        logger.debug(f"   First notification: {notifications_list[0].get('title', 'N/A')}")
+    
     return jsonify({
-        'notifications': [n.to_dict() for n in result['items']],
+        'notifications': notifications_list,
         'pagination': result['pagination']
     }), 200
 
@@ -243,7 +263,7 @@ def get_notifications():
 @jwt_required()
 def mark_notification_read(notification_id):
     """Mark notification as read"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     notification = Notification.query.filter_by(
         notification_id=notification_id,
@@ -263,7 +283,7 @@ def mark_notification_read(notification_id):
 @jwt_required()
 def mark_all_notifications_read():
     """Mark all notifications as read"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     Notification.query.filter_by(user_id=user_id, is_read=False)\
         .update({'is_read': True, 'read_at': datetime.utcnow()})
@@ -308,7 +328,7 @@ def upload_file(project_id):
         return jsonify({'error': f'File type .{file_ext} not allowed. Allowed types: {', '.join(allowed_extensions)}'}), 400
     
     # Create unique filename
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     unique_filename = f"project_{project_id}_user_{user_id}_{timestamp}_{filename}"
     

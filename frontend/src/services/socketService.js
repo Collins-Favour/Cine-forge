@@ -9,8 +9,15 @@ class SocketService {
 
     connect() {
         const token = useAuthStore.getState().token
+        const user = useAuthStore.getState().user
         const socketUrl =
             import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'
+
+        console.log('🔌 Socket connecting...', { 
+            socketUrl, 
+            hasToken: !!token, 
+            user: user ? { user_id: user.user_id, username: user.username } : null 
+        })
 
         this.socket = io(socketUrl, {
             auth: { token },
@@ -19,16 +26,23 @@ class SocketService {
 
         this.socket.on('connect', () => {
             this.connected = true
-            console.log('Socket connected')
+            console.log('✅ Socket connected successfully', {
+                socketId: this.socket.id,
+                user: user ? { user_id: user.user_id, username: user.username } : null
+            })
         })
 
-        this.socket.on('disconnect', () => {
+        this.socket.on('disconnect', (reason) => {
             this.connected = false
-            console.log('Socket disconnected')
+            console.log('❌ Socket disconnected', { reason })
+        })
+
+        this.socket.on('connect_error', (error) => {
+            console.error('🚫 Socket connection error:', error)
         })
 
         this.socket.on('error', (error) => {
-            console.error('Socket error:', error)
+            console.error('⚠️ Socket error:', error)
         })
 
         return this.socket
@@ -71,7 +85,8 @@ class SocketService {
 
     sendMessage(projectId, messageData) {
         // Get user_id from auth store
-        const userId = useAuthStore.getState().user?.user_id
+        const user = useAuthStore.getState().user
+        const userId = user?.user_id
 
         this.emit('send_message', {
             project_id: projectId,
@@ -81,14 +96,23 @@ class SocketService {
     }
 
     sendTyping(projectId, isTyping) {
-        // Get user_id from auth store
-        const userId = useAuthStore.getState().user?.user_id
+        // Get user_id and username from auth store
+        const user = useAuthStore.getState().user
+        const userId = user?.user_id
+        const username = user?.username || (user?.first_name && user?.last_name ? `${user.first_name} ${user.last_name}` : 'Someone')
 
-        this.emit('typing', {
-            project_id: projectId,
-            user_id: userId,
-            is_typing: isTyping
-        })
+        if (isTyping) {
+            this.emit('typing', {
+                project_id: projectId,
+                user_id: userId,
+                username: username
+            })
+        } else {
+            this.emit('stop_typing', {
+                project_id: projectId,
+                user_id: userId
+            })
+        }
     }
 }
 

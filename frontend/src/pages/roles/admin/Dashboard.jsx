@@ -12,12 +12,15 @@ export default function AdminDashboard() {
   const navigate = useNavigate()
   const [showProfileSettings, setShowProfileSettings] = useState(false)
 
-  const { data: stats } = useQuery('admin-stats', async () => {
+  const { data: stats, isLoading } = useQuery('admin-stats', async () => {
     const response = await api.get('/admin/dashboard')
     return response.data
   }, {
-    refetchInterval: 10000, // Refresh every 10 seconds
-    refetchIntervalInBackground: true
+    staleTime: 30000, // Data stays fresh for 30 seconds
+    cacheTime: 300000, // Cache for 5 minutes
+    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchIntervalInBackground: false, // Don't refetch when tab is inactive
+    refetchOnWindowFocus: true, // Refetch when user returns to the tab
   })
 
   return (
@@ -55,130 +58,142 @@ export default function AdminDashboard() {
         )}
       </AnimatePresence>
 
-      {/* Stats Grid */}
-      <div className="grid md:grid-cols-4 gap-6 mb-8">
-        <StatCard
-          icon={<Users className="w-6 h-6" />}
-          label="Total Users"
-          value={stats?.total_users || 0}
-          color="primary-500"
-        />
-        <StatCard
-          icon={<Activity className="w-6 h-6" />}
-          label="Active Projects"
-          value={stats?.active_projects || 0}
-          color="accent-green"
-        />
-        <StatCard
-          icon={<Database className="w-6 h-6" />}
-          label="Storage Used"
-          value={`${stats?.storage_used || 0} GB`}
-          color="accent-purple"
-        />
-        <StatCard
-          icon={<AlertTriangle className="w-6 h-6" />}
-          label="System Alerts"
-          value={stats?.system_alerts || 0}
-          color="accent-orange"
-        />
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid md:grid-cols-3 gap-6 mb-8">
-        <QuickActionCard
-          title="System Settings"
-          description="Configure system"
-          icon={<Settings className="w-8 h-8" />}
-          color="accent-purple"
-          link="/admin/settings"
-        />
-        <QuickActionCard
-          title="Security"
-          description="Security & logs"
-          icon={<Lock className="w-8 h-8" />}
-          color="accent-pink"
-          link="/admin/security"
-        />
-        <QuickActionCard
-          title="Analytics"
-          description="Platform analytics"
-          icon={<TrendingUp className="w-8 h-8" />}
-          color="accent-green"
-          link="/admin/analytics"
-        />
-      </div>
-
-      {/* System Overview */}
-      <div className="grid md:grid-cols-2 gap-6 mb-8">
-        <div className="card">
-          <h2 className="text-xl font-bold text-dark-900 mb-4">System Health</h2>
-          <div className="space-y-4">
-            <HealthMetric label="API Response Time" value="45ms" status="good" />
-            <HealthMetric label="Database" value="Operational" status="good" />
-            <HealthMetric label="AI Services" value="Operational" status="good" />
-            <HealthMetric label="Storage" value="78% Used" status="warning" />
+      {/* Loading State */}
+      {isLoading ? (
+        <div className="flex justify-center items-center py-20">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-primary-600 mx-auto mb-4"></div>
+            <p className="text-dark-600 text-lg">Loading dashboard data...</p>
           </div>
         </div>
+      ) : (
+        <>
+          {/* Stats Grid */}
+          <div className="grid md:grid-cols-4 gap-6 mb-8">
+            <StatCard
+              icon={<Users className="w-6 h-6" />}
+              label="Total Users"
+              value={stats?.total_users || 0}
+              color="primary-500"
+            />
+            <StatCard
+              icon={<Activity className="w-6 h-6" />}
+              label="Active Projects"
+              value={stats?.active_projects || 0}
+              color="accent-green"
+            />
+            <StatCard
+              icon={<Database className="w-6 h-6" />}
+              label="Storage Used"
+              value={`${stats?.storage_used || 0} GB`}
+              color="accent-purple"
+            />
+            <StatCard
+              icon={<AlertTriangle className="w-6 h-6" />}
+              label="System Alerts"
+              value={stats?.system_alerts || 0}
+              color="accent-orange"
+            />
+          </div>
 
-        <div className="card">
-          <h2 className="text-xl font-bold text-dark-900 mb-4">Recent Activity</h2>
-          {stats?.recent_activity?.length > 0 ? (
-            <div className="space-y-3">
-              {stats.recent_activity.map((activity, index) => (
-                <ActivityItem key={index} activity={activity} />
-              ))}
+          {/* Quick Actions */}
+          <div className="grid md:grid-cols-3 gap-6 mb-8">
+            <QuickActionCard
+              title="System Settings"
+              description="Configure system"
+              icon={<Settings className="w-8 h-8" />}
+              color="accent-purple"
+              link="/admin/settings"
+            />
+            <QuickActionCard
+              title="Security"
+              description="Security & logs"
+              icon={<Lock className="w-8 h-8" />}
+              color="accent-pink"
+              link="/admin/security"
+            />
+            <QuickActionCard
+              title="Analytics"
+              description="Platform analytics"
+              icon={<TrendingUp className="w-8 h-8" />}
+              color="accent-green"
+              link="/admin/analytics"
+            />
+          </div>
+
+          {/* System Overview */}
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="card">
+              <h2 className="text-xl font-bold text-dark-900 mb-4">System Health</h2>
+              <div className="space-y-4">
+                <HealthMetric label="API Response Time" value="45ms" status="good" />
+                <HealthMetric label="Database" value="Operational" status="good" />
+                <HealthMetric label="AI Services" value="Operational" status="good" />
+                <HealthMetric label="Storage" value="78% Used" status="warning" />
+              </div>
             </div>
-          ) : (
-            <p className="text-dark-600 text-center py-8">No recent activity</p>
-          )}
-        </div>
-      </div>
 
-      {/* User Statistics */}
-      <div className="card mb-8">
-        <h2 className="text-xl font-bold text-dark-900 mb-4">User Statistics</h2>
-        <div className="grid md:grid-cols-5 gap-4">
-          <UserStatCard role="Filmmakers" count={stats?.users_by_role?.filmmaker || 0} />
-          <UserStatCard role="Investors" count={stats?.users_by_role?.investor || 0} />
-          <UserStatCard role="Actors" count={stats?.users_by_role?.actor || 0} />
-          <UserStatCard role="Crew" count={stats?.users_by_role?.crew_member || 0} />
-          <UserStatCard role="Admins" count={stats?.users_by_role?.admin || 0} />
-        </div>
-      </div>
-
-      {/* Recent Users */}
-      <div className="card">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-dark-900">Recent Users</h2>
-          <Link to="/admin/users" className="text-primary-600 hover:text-primary-700 font-medium">
-            View All →
-          </Link>
-        </div>
-
-        {stats?.recent_users?.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-dark-200">
-                  <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">User</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Email</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Role</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Status</th>
-                  <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Joined</th>
-                  <th className="text-right py-3 px-4 text-sm font-medium text-dark-700">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.recent_users.map((user) => (
-                  <UserRow key={user.id} user={user} />
-                ))}
-              </tbody>
-            </table>
+            <div className="card">
+              <h2 className="text-xl font-bold text-dark-900 mb-4">Recent Activity</h2>
+              {stats?.recent_activity?.length > 0 ? (
+                <div className="space-y-3">
+                  {stats.recent_activity.map((activity, index) => (
+                    <ActivityItem key={index} activity={activity} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-dark-600 text-center py-8">No recent activity</p>
+              )}
+            </div>
           </div>
-        ) : (
-          <EmptyState />
-        )}
-      </div>
+
+          {/* User Statistics */}
+          <div className="card mb-8">
+            <h2 className="text-xl font-bold text-dark-900 mb-4">User Statistics</h2>
+            <div className="grid md:grid-cols-5 gap-4">
+              <UserStatCard role="Filmmakers" count={stats?.users_by_role?.filmmaker || 0} />
+              <UserStatCard role="Investors" count={stats?.users_by_role?.investor || 0} />
+              <UserStatCard role="Actors" count={stats?.users_by_role?.actor || 0} />
+              <UserStatCard role="Crew" count={stats?.users_by_role?.crew_member || 0} />
+              <UserStatCard role="Admins" count={stats?.users_by_role?.admin || 0} />
+            </div>
+          </div>
+
+          {/* Recent Users */}
+          <div className="card">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-dark-900">Recent Users</h2>
+              <Link to="/admin/users" className="text-primary-600 hover:text-primary-700 font-medium">
+                View All →
+              </Link>
+            </div>
+
+            {stats?.recent_users?.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-dark-200">
+                      <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">User</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Email</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Role</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Status</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-dark-700">Joined</th>
+                      <th className="text-right py-3 px-4 text-sm font-medium text-dark-700">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.recent_users.map((user) => (
+                      <UserRow key={user.id} user={user} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState />
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

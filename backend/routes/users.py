@@ -6,8 +6,10 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, User, Project, UsageAnalytics
 from utils.decorators import validate_request
+from utils.logger import get_logger
 from sqlalchemy import func
 
+logger = get_logger('cineforge.api')
 users_bp = Blueprint('users', __name__)
 
 
@@ -109,7 +111,7 @@ def get_dashboard():
     # Get all projects user has access to (via collaborations)
     from models import ProjectCollaborator
     
-    print(f"📊 Getting dashboard for user_id: {target_user_id}")
+    logger.debug(f"Getting dashboard for user_id: {target_user_id}")
     
     # Get all project IDs user is collaborating on (includes owned projects since owners are auto-added as collaborators)
     collaborator_records = ProjectCollaborator.query.filter(
@@ -118,9 +120,9 @@ def get_dashboard():
     ).all()
     
     collaborated_project_ids = [pc.project_id for pc in collaborator_records]
-    print(f"   Found {len(collaborator_records)} collaborator records for user {target_user_id}")
+    logger.debug(f"Found {len(collaborator_records)} collaborator records for user {target_user_id}")
     for record in collaborator_records:
-        print(f"     - Project ID: {record.project_id}, Role: {record.role}, Status: {record.invitation_status}")
+        logger.debug(f"  - Project ID: {record.project_id}, Role: {record.role}, Status: {record.invitation_status}")
     
     # Get all projects (deduplicated) - filter out archived
     all_projects = Project.query.filter(
@@ -129,10 +131,10 @@ def get_dashboard():
         db.or_(Project.is_archived == False, Project.is_archived == None)
     ).all() if collaborated_project_ids else []
     
-    print(f"   Found {len(all_projects)} projects after filtering")
+    logger.debug(f"Found {len(all_projects)} projects after filtering")
     if all_projects:
-        print(f"   Project IDs: {[p.project_id for p in all_projects]}")
-        print(f"   Project Titles: {[p.title for p in all_projects]}")
+        logger.debug(f"Project IDs: {[p.project_id for p in all_projects]}")
+        logger.debug(f"Project Titles: {[p.title for p in all_projects]}")
     
     total_projects = len(all_projects)
     

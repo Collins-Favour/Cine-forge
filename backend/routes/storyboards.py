@@ -4,20 +4,30 @@ Handles storyboard panel CRUD and AI image generation
 """
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from sqlalchemy.orm import selectinload
 from models import db, StoryboardPanel, Scene, VisualStyle, Project
 from utils.decorators import validate_request, project_permission_required
 from utils.helpers import log_activity
-from services import GeminiService
+from utils.cache import cache_get, cache_set, cache_key, invalidate_project_cache
+from services import ImageGenerationService
 import time
+from utils.logger import get_logger
 
 storyboards_bp = Blueprint('storyboards', __name__)
+logger = get_logger('cineforge.api')
 
 
 @storyboards_bp.route('/project/<int:project_id>', methods=['GET'])
 @jwt_required()
 @project_permission_required('viewer')
 def get_project_storyboards(project_id):
-    """Get all storyboard panels for a project"""
+    """Get all storyboard panels for a project with caching"""
+    # Try cache first
+    cache_k = cache_key('storyboards', 'project', project_id)
+    cached_result = cache_get(cache_k)
+    if cached_result:
+        return jsonify(cached_result), 200
+    
     project = Project.query.get(project_id)
     if not project:
         return jsonify({'error': 'Project not found'}), 404
@@ -26,14 +36,23 @@ def get_project_storyboards(project_id):
     scenes = Scene.query.filter_by(project_id=project_id).all()
     scene_ids = [s.scene_id for s in scenes]
     
-    # Get all panels for these scenes
-    panels = StoryboardPanel.query.filter(StoryboardPanel.scene_id.in_(scene_ids))\
-        .order_by(StoryboardPanel.scene_id, StoryboardPanel.panel_number).all()
+    if scene_ids:
+        # Get all panels for these scenes with eager loading
+        panels = StoryboardPanel.query.filter(StoryboardPanel.scene_id.in_(scene_ids))\
+            .options(selectinload(StoryboardPanel.scene))\
+            .order_by(StoryboardPanel.scene_id, StoryboardPanel.panel_number).all()
+    else:
+        panels = []
     
-    return jsonify({
+    result = {
         'panels': [p.to_dict() for p in panels],
         'total': len(panels)
-    }), 200
+    }
+    
+    # Cache for 3 minutes
+    cache_set(cache_k, result, timeout=180)
+    
+    return jsonify(result), 200
 
 
 @storyboards_bp.route('/scene/<int:scene_id>/panels', methods=['GET'])
@@ -55,7 +74,7 @@ def get_panels(scene_id):
 @validate_request(['image_prompt'])
 def create_panel(scene_id):
     """Create new storyboard panel"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     scene = Scene.query.get(scene_id)
     if not scene:
         return jsonify({'error': 'Scene not found'}), 404
@@ -104,7 +123,7 @@ def create_panel(scene_id):
 @jwt_required()
 def update_panel(panel_id):
     """Update storyboard panel"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     panel = StoryboardPanel.query.get(panel_id)
     
     if not panel:
@@ -135,7 +154,7 @@ def update_panel(panel_id):
 @jwt_required()
 def delete_panel(panel_id):
     """Delete storyboard panel"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     panel = StoryboardPanel.query.get(panel_id)
     
     if not panel:
@@ -156,31 +175,31 @@ def delete_panel(panel_id):
 @jwt_required()
 def generate_panel_image(panel_id):
     """Generate AI image for storyboard panel"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
-    print(f"🎬 Received image generation request for panel_id: {panel_id}")
+    logger.debug(f"Received image generation request for panel_id: {panel_id}")
     
     panel = StoryboardPanel.query.get(panel_id)
     
     if not panel:
-        print(f"❌ Panel {panel_id} not found in database")
+        logger.error(f"Panel {panel_id} not found in database")
         # Show all panels for debugging
         all_panels = StoryboardPanel.query.all()
-        print(f"Available panels: {[p.panel_id for p in all_panels]}")
+        logger.debug(f"Available panels: {[p.panel_id for p in all_panels]}")
         return jsonify({'error': 'Panel not found'}), 404
     
-    print(f"✅ Panel found: {panel.panel_id}")
-    print(f"   Scene ID: {panel.scene_id}")
-    print(f"   Image prompt: {panel.image_prompt[:100] if panel.image_prompt else 'None'}...")
+    logger.info(f"Panel found: {panel.panel_id}")
+    logger.debug(f"Scene ID: {panel.scene_id}")
+    logger.debug(f"Image prompt: {panel.image_prompt[:100] if panel.image_prompt else 'None'}...")
     
     scene = Scene.query.get(panel.scene_id)
     
     if not scene:
-        print(f"❌ Scene {panel.scene_id} not found")
+        logger.error(f"Scene {panel.scene_id} not found")
         return jsonify({'error': 'Scene not found'}), 404
     
     try:
-        gemini_service = GeminiService()
+        image_service = ImageGenerationService()
         
         # Get project visual style
         visual_style = VisualStyle.query.filter_by(
@@ -195,7 +214,7 @@ def generate_panel_image(panel_id):
                 'mood_keywords': visual_style.mood_keywords,
                 'color_palette': visual_style.color_palette
             }
-            enhanced_prompt = gemini_service.enhance_prompt_for_consistency(
+            enhanced_prompt = image_service.enhance_prompt_for_consistency(
                 panel.image_prompt, 
                 style_dict
             )
@@ -208,11 +227,11 @@ def generate_panel_image(panel_id):
         }
         db.session.commit()
         
-        # Generate actual image using Gemini Imagen 3
-        print(f"🎨 Generating image for panel {panel_id} with Gemini Imagen 3...")
-        image_data = gemini_service.generate_image(
+        # Generate actual image using Gemini Imagen 4
+        logger.debug(f"Generating image for panel {panel_id} with Gemini Imagen 4...")
+        image_data = image_service.generate_image(
             prompt=enhanced_prompt,
-            negative_prompt=panel.negative_prompt or "blurry, bad quality, distorted, text, watermark, low resolution"
+            negative_prompt=panel.negative_prompt or "blurry, bad quality, distorted, watermark, low resolution"
         )
         
         if image_data:
@@ -220,9 +239,9 @@ def generate_panel_image(panel_id):
             panel.generated_image_url = image_data
             panel.status = 'completed'
             panel.generation_timestamp = db.func.now()
-            panel.ai_model_used = 'Pollinations.ai'
-            
-            print(f"✅ Image generated successfully for panel {panel_id}")
+            panel.ai_model_used = 'Gemini Imagen 4'
+
+            logger.info(f"Image generated successfully for panel {panel_id}")
         else:
             panel.status = 'failed'
             db.session.commit()
@@ -236,7 +255,7 @@ def generate_panel_image(panel_id):
             operation_type='image_generation',
             input_data={'panel_id': panel_id, 'prompt': enhanced_prompt},
             output_data={'status': 'completed', 'has_image': bool(image_data)},
-            ai_model='Gemini Imagen 3',
+            ai_model='Gemini Imagen 4',
             status='completed'
         )
         db.session.add(ai_log)
@@ -253,9 +272,7 @@ def generate_panel_image(panel_id):
     except Exception as e:
         panel.status = 'failed'
         db.session.commit()
-        print(f"❌ Error generating image: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error generating image: {e}", exc_info=True)
         return jsonify({'error': f'Generation failed: {str(e)}'}), 500
 
 
@@ -272,7 +289,7 @@ def get_visual_styles(project_id):
 @validate_request(['style_name'])
 def create_visual_style(project_id):
     """Create visual style for project"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     style = VisualStyle(
@@ -428,7 +445,7 @@ def download_storyboards(project_id):
 @project_permission_required('editor')
 def generate_mood_board(project_id):
     """Generate mood board for project with multiple reference images"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     project = Project.query.get(project_id)
     if not project:
@@ -440,14 +457,14 @@ def generate_mood_board(project_id):
     if num_images < 1 or num_images > 8:
         return jsonify({'error': 'num_images must be between 1 and 8'}), 400
     
-    print(f"🎨 Generating mood board for project: {project.title}")
-    print(f"   Images requested: {num_images}")
+    logger.debug(f"Generating mood board for project: {project.title}")
+    logger.debug(f"Images requested: {num_images}")
     
     try:
-        gemini_service = GeminiService()
+        image_service = ImageGenerationService()
         
         # Generate mood board
-        mood_board = gemini_service.generate_mood_board(
+        mood_board = image_service.generate_mood_board(
             project_title=project.title,
             genre=project.genre or 'Film',
             logline=project.logline or '',
@@ -474,7 +491,7 @@ def generate_mood_board(project_id):
                 'images_generated': len(mood_board),
                 'categories': [img['category'] for img in mood_board]
             },
-            ai_model='Pollinations.ai + Gemini Pro',
+            ai_model='Gemini Imagen 4',
             status='completed'
         )
         db.session.add(ai_log)
@@ -490,9 +507,7 @@ def generate_mood_board(project_id):
         }), 200
         
     except Exception as e:
-        print(f"❌ Error generating mood board: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error generating mood board: {e}", exc_info=True)
         return jsonify({'error': f'Mood board generation failed: {str(e)}'}), 500
 
 
@@ -501,7 +516,7 @@ def generate_mood_board(project_id):
 @project_permission_required('editor')
 def batch_generate_storyboards(project_id):
     """Batch generate storyboard images for all pending panels"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     project = Project.query.get(project_id)
     if not project:
@@ -520,37 +535,37 @@ def batch_generate_storyboards(project_id):
     if not pending_panels:
         return jsonify({'message': 'No pending panels to generate'}), 200
     
-    print(f"🎨 Batch generating {len(pending_panels)} storyboard images")
+    logger.debug(f"Batch generating {len(pending_panels)} storyboard images")
     
     try:
-        gemini_service = GeminiService()
+        image_service = ImageGenerationService()
         
         generated = 0
         failed = 0
         
         for panel in pending_panels:
-            print(f"\n📸 Generating image for panel {panel.panel_id}...")
+            logger.debug(f"\n📸 Generating image for panel {panel.panel_id}...")
             
             panel.status = 'generating'
             db.session.commit()
             
             try:
-                image_data = gemini_service.generate_image(
+                image_data = image_service.generate_image(
                     prompt=panel.image_prompt,
-                    negative_prompt=panel.negative_prompt or "blurry, bad quality, distorted, text, watermark"
+                    negative_prompt=panel.negative_prompt or "blurry, bad quality, distorted, watermark"
                 )
                 
                 if image_data:
                     panel.generated_image_url = image_data
                     panel.status = 'completed'
                     panel.generation_timestamp = db.func.now()
-                    panel.ai_model_used = 'Pollinations.ai'
+                    panel.ai_model_used = 'Gemini Imagen 4'
                     generated += 1
-                    print(f"   ✅ Panel {panel.panel_id} generated successfully")
+                    logger.info(f"Panel {panel.panel_id} generated successfully")
                 else:
                     panel.status = 'failed'
                     failed += 1
-                    print(f"   ❌ Panel {panel.panel_id} generation failed")
+                    logger.error(f"Panel {panel.panel_id} generation failed")
                 
                 db.session.commit()
                 
@@ -558,7 +573,7 @@ def batch_generate_storyboards(project_id):
                 time.sleep(2)
                 
             except Exception as e:
-                print(f"   ❌ Error generating panel {panel.panel_id}: {e}")
+                logger.error(f"Error generating panel {panel.panel_id}: {e}")
                 panel.status = 'failed'
                 failed += 1
                 db.session.commit()
@@ -574,8 +589,6 @@ def batch_generate_storyboards(project_id):
         }), 200
         
     except Exception as e:
-        print(f"❌ Batch generation error: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Batch generation error: {e}", exc_info=True)
         return jsonify({'error': f'Batch generation failed: {str(e)}'}), 500
 

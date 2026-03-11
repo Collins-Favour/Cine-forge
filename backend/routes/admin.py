@@ -2,13 +2,17 @@
 Admin Routes
 Handles admin dashboard, user management, system settings, and analytics
 """
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, make_response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, User, Project, CSpaceMessage, ActivityLog, UsageAnalytics
 from models.system import SystemSetting
+from utils.logger import get_logger
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
+import csv
+import io
 
+logger = get_logger('cineforge.api')
 admin_bp = Blueprint('admin', __name__)
 
 
@@ -24,65 +28,98 @@ def check_admin():
 @admin_bp.route('/dashboard', methods=['GET'])
 @jwt_required()
 def get_admin_dashboard():
-    """Get admin dashboard statistics"""
+    """Get admin dashboard statistics - optimized for instant loading"""
     admin_user = check_admin()
     if not admin_user:
         return jsonify({'error': 'Admin access required'}), 403
     
-    # Total users
-    total_users = User.query.filter_by(is_active=True).count()
-    
-    # Users by role
-    users_by_role = db.session.query(
-        User.role, func.count(User.user_id)
-    ).filter_by(is_active=True).group_by(User.role).all()
-    
-    users_by_role_dict = {role: count for role, count in users_by_role}
-    
-    # Active projects
-    active_projects = Project.query.filter_by(is_archived=False).count()
-    
-    # Storage calculation (mock for now)
-    storage_used = round(Project.query.count() * 0.5, 2)  # Mock: 0.5GB per project
-    
-    # System alerts (mock)
-    system_alerts = 0
-    
-    # Recent users (last 10)
-    recent_users = User.query.order_by(desc(User.created_at)).limit(10).all()
-    
-    # Recent activity
-    recent_activity = []
     try:
-        activities = ActivityLog.query.order_by(desc(ActivityLog.created_at)).limit(10).all()
-        recent_activity = [
-            {
-                'description': f"{a.user.username if a.user else 'User'} {a.action}",
-                'timestamp': a.created_at.strftime('%Y-%m-%d %H:%M:%S')
-            } for a in activities
-        ]
-    except:
-        pass
-    
-    return jsonify({
-        'total_users': total_users,
-        'users_by_role': users_by_role_dict,
-        'active_projects': active_projects,
-        'storage_used': storage_used,
-        'system_alerts': system_alerts,
-        'recent_users': [
-            {
-                'id': u.user_id,
-                'full_name': f"{u.first_name or ''} {u.last_name or ''}".strip() or u.username,
-                'email': u.email,
-                'role': u.role,
-                'is_active': u.is_active,
-                'is_verified': u.is_verified,
-                'created_at': u.created_at.isoformat() if u.created_at else None
-            } for u in recent_users
-        ],
-        'recent_activity': recent_activity
-    }), 200
+        # Use efficient aggregation queries
+        # Total users
+        total_users = db.session.query(func.count(User.user_id)).filter_by(is_active=True).scalar() or 0
+        
+        # Users by role - single query
+        users_by_role = dict(
+            db.session.query(User.role, func.count(User.user_id))
+            .filter_by(is_active=True)
+            .group_by(User.role)
+            .all()
+        )
+        
+        # Active projects count - single query
+        active_projects = db.session.query(func.count(Project.project_id)).filter_by(is_archived=False).scalar() or 0
+        
+        # Storage calculation (mock for now)
+        storage_used = round(active_projects * 0.5, 2)  # Mock: 0.5GB per project
+        
+        # System alerts (mock)
+        system_alerts = 0
+        
+        # Recent users (last 10) - optimized with selected columns only
+        recent_users = db.session.query(
+            User.user_id,
+            User.username,
+            User.first_name,
+            User.last_name,
+            User.email,
+            User.role,
+            User.is_active,
+            User.is_verified,
+            User.created_at
+        ).order_by(desc(User.created_at)).limit(10).all()
+        
+        # Recent activity - optimized with limit and eager loading
+        recent_activity = []
+        try:
+            activities = db.session.query(
+                ActivityLog.activity_description,
+                ActivityLog.created_at,
+                User.username
+            ).join(User, ActivityLog.user_id == User.user_id, isouter=True)\
+             .order_by(desc(ActivityLog.created_at))\
+             .limit(10).all()
+            
+            recent_activity = [
+                {
+                    'description': f"{username or 'User'} - {desc}",
+                    'timestamp': created_at.strftime('%Y-%m-%d %H:%M:%S') if created_at else ''
+                } for desc, created_at, username in activities
+            ]
+        except Exception as e:
+            logger.warning(f"Activity log error: {e}")
+            recent_activity = []
+        
+        return jsonify({
+            'total_users': total_users,
+            'users_by_role': users_by_role,
+            'active_projects': active_projects,
+            'storage_used': storage_used,
+            'system_alerts': system_alerts,
+            'recent_users': [
+                {
+                    'id': u.user_id,
+                    'full_name': f"{u.first_name or ''} {u.last_name or ''}".strip() or u.username,
+                    'email': u.email,
+                    'role': u.role,
+                    'is_active': u.is_active,
+                    'is_verified': u.is_verified,
+                    'created_at': u.created_at.isoformat() if u.created_at else None
+                } for u in recent_users
+            ],
+            'recent_activity': recent_activity
+        }), 200
+    except Exception as e:
+        logger.error(f"Dashboard error: {e}", exc_info=True)
+        # Return basic data even if there's an error
+        return jsonify({
+            'total_users': 0,
+            'users_by_role': {},
+            'active_projects': 0,
+            'storage_used': 0,
+            'system_alerts': 0,
+            'recent_users': [],
+            'recent_activity': []
+        }), 200
 
 
 @admin_bp.route('/users', methods=['GET'])
@@ -266,10 +303,51 @@ def update_user(user_id):
     }), 200
 
 
+@admin_bp.route('/users/<int:user_id>/deactivate', methods=['PATCH'])
+@jwt_required()
+def deactivate_user(user_id):
+    """Deactivate user (admin only)"""
+    admin_user = check_admin()
+    if not admin_user:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    if admin_user.user_id == user_id:
+        return jsonify({'error': 'Cannot deactivate your own account'}), 400
+    
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Deactivate user
+    user.is_active = False
+    db.session.commit()
+    
+    return jsonify({'message': 'User deactivated successfully'}), 200
+
+
+@admin_bp.route('/users/<int:user_id>/activate', methods=['PATCH'])
+@jwt_required()
+def activate_user(user_id):
+    """Activate/reactivate user (admin only)"""
+    admin_user = check_admin()
+    if not admin_user:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Activate user
+    user.is_active = True
+    db.session.commit()
+    
+    return jsonify({'message': 'User activated successfully'}), 200
+
+
 @admin_bp.route('/users/<int:user_id>', methods=['DELETE'])
 @jwt_required()
 def delete_user(user_id):
-    """Delete user (admin only)"""
+    """Permanently delete user from database (admin only)"""
     admin_user = check_admin()
     if not admin_user:
         return jsonify({'error': 'Admin access required'}), 403
@@ -281,11 +359,12 @@ def delete_user(user_id):
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    # Soft delete - just deactivate
-    user.is_active = False
+    # Permanently delete user from database
+    # Note: Related records will be handled by cascade rules in the database schema
+    db.session.delete(user)
     db.session.commit()
     
-    return jsonify({'message': 'User deleted successfully'}), 200
+    return jsonify({'message': 'User permanently deleted'}), 200
 
 
 @admin_bp.route('/users/<int:user_id>/reset-password', methods=['POST'])
@@ -558,26 +637,219 @@ def update_system_settings():
 @admin_bp.route('/stats/overview', methods=['GET'])
 @jwt_required()
 def get_stats_overview():
-    """Get quick stats overview"""
+    """Get quick stats overview - optimized"""
     admin_user = check_admin()
     if not admin_user:
         return jsonify({'error': 'Admin access required'}), 403
     
-    total_users = User.query.count()
-    active_users = User.query.filter_by(is_active=True).count()
-    total_projects = Project.query.count()
-    active_projects = Project.query.filter_by(is_archived=False).count()
-    total_messages = CSpaceMessage.query.count()
+    try:
+        # Use scalar queries for efficiency
+        total_users = db.session.query(func.count(User.user_id)).scalar() or 0
+        active_users = db.session.query(func.count(User.user_id)).filter_by(is_active=True).scalar() or 0
+        total_projects = db.session.query(func.count(Project.project_id)).scalar() or 0
+        active_projects = db.session.query(func.count(Project.project_id)).filter_by(is_archived=False).scalar() or 0
+        total_messages = db.session.query(func.count(CSpaceMessage.message_id)).scalar() or 0
+        
+        # Users this month
+        month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        new_users_this_month = db.session.query(func.count(User.user_id))\
+            .filter(User.created_at >= month_start).scalar() or 0
+        
+        return jsonify({
+            'total_users': total_users,
+            'active_users': active_users,
+            'total_projects': total_projects,
+            'active_projects': active_projects,
+            'total_messages': total_messages,
+            'new_users_this_month': new_users_this_month
+        }), 200
+    except Exception as e:
+        logger.error(f"Stats overview error: {e}", exc_info=True)
+        return jsonify({
+            'total_users': 0,
+            'active_users': 0,
+            'total_projects': 0,
+            'active_projects': 0,
+            'total_messages': 0,
+            'new_users_this_month': 0
+        }), 200
+
+
+@admin_bp.route('/export/users', methods=['GET'])
+@jwt_required()
+def export_users_csv():
+    """Export all users to CSV"""
+    admin_user = check_admin()
+    if not admin_user:
+        return jsonify({'error': 'Admin access required'}), 403
     
-    # Users this month
-    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
-    new_users_this_month = User.query.filter(User.created_at >= month_start).count()
+    try:
+        # Get all users
+        users = User.query.order_by(User.created_at.desc()).all()
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow([
+            'User ID', 'Username', 'Email', 'First Name', 'Last Name',
+            'Role', 'Is Active', 'Is Verified', 'Created At', 'Last Login'
+        ])
+        
+        # Write data
+        for user in users:
+            writer.writerow([
+                user.user_id,
+                user.username,
+                user.email,
+                user.first_name or '',
+                user.last_name or '',
+                user.role,
+                'Yes' if user.is_active else 'No',
+                'Yes' if user.is_verified else 'No',
+                user.created_at.strftime('%Y-%m-%d %H:%M:%S') if user.created_at else '',
+                user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else 'Never'
+            ])
+        
+        # Create response
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename=users_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
+        
+        return response
+    except Exception as e:
+        logger.error(f"Export users error: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to export users'}), 500
+
+
+@admin_bp.route('/export/analytics', methods=['GET'])
+@jwt_required()
+def export_analytics_csv():
+    """Export analytics report to CSV"""
+    admin_user = check_admin()
+    if not admin_user:
+        return jsonify({'error': 'Admin access required'}), 403
     
-    return jsonify({
-        'total_users': total_users,
-        'active_users': active_users,
-        'total_projects': total_projects,
-        'active_projects': active_projects,
-        'total_messages': total_messages,
-        'new_users_this_month': new_users_this_month
-    }), 200
+    try:
+        days = request.args.get('days', 30, type=int)
+        start_date = datetime.utcnow() - timedelta(days=days)
+        
+        # Get analytics data
+        new_users = db.session.query(
+            func.date(User.created_at).label('date'),
+            func.count(User.user_id).label('count')
+        ).filter(User.created_at >= start_date)\
+         .group_by(func.date(User.created_at))\
+         .all()
+        
+        new_projects = db.session.query(
+            func.date(Project.created_at).label('date'),
+            func.count(Project.project_id).label('count')
+        ).filter(Project.created_at >= start_date)\
+         .group_by(func.date(Project.created_at))\
+         .all()
+        
+        messages_over_time = db.session.query(
+            func.date(CSpaceMessage.sent_at).label('date'),
+            func.count(CSpaceMessage.message_id).label('count')
+        ).filter(CSpaceMessage.sent_at >= start_date)\
+         .group_by(func.date(CSpaceMessage.sent_at))\
+         .all()
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write analytics summary
+        writer.writerow(['CineForge AI - Analytics Report'])
+        writer.writerow(['Date Range:', f'Last {days} days'])
+        writer.writerow(['Generated:', datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')])
+        writer.writerow([])
+        
+        # New Users section
+        writer.writerow(['New Users by Date'])
+        writer.writerow(['Date', 'Count'])
+        for date, count in new_users:
+            writer.writerow([str(date), count])
+        writer.writerow([])
+        
+        # New Projects section
+        writer.writerow(['New Projects by Date'])
+        writer.writerow(['Date', 'Count'])
+        for date, count in new_projects:
+            writer.writerow([str(date), count])
+        writer.writerow([])
+        
+        # Messages section
+        writer.writerow(['Messages by Date'])
+        writer.writerow(['Date', 'Count'])
+        for date, count in messages_over_time:
+            writer.writerow([str(date), count])
+        
+        # Create response
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename=analytics_report_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
+        
+        return response
+    except Exception as e:
+        logger.error(f"Export analytics error: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to export analytics'}), 500
+
+
+@admin_bp.route('/export/projects', methods=['GET'])
+@jwt_required()
+def export_projects_csv():
+    """Export all projects to CSV"""
+    admin_user = check_admin()
+    if not admin_user:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        # Get all projects with creator info
+        projects = db.session.query(
+            Project.project_id,
+            Project.title,
+            Project.genre,
+            Project.production_stage,
+            Project.is_archived,
+            Project.created_at,
+            User.username
+        ).join(User, Project.created_by == User.user_id)\
+         .order_by(Project.created_at.desc()).all()
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Write header
+        writer.writerow([
+            'Project ID', 'Title', 'Genre', 'Production Stage',
+            'Creator', 'Status', 'Created At'
+        ])
+        
+        # Write data
+        for proj_id, title, genre, stage, archived, created_at, username in projects:
+            writer.writerow([
+                proj_id,
+                title,
+                genre or 'N/A',
+                stage or 'concept',
+                username,
+                'Archived' if archived else 'Active',
+                created_at.strftime('%Y-%m-%d %H:%M:%S') if created_at else ''
+            ])
+        
+        # Create response
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename=projects_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv'
+        
+        return response
+    except Exception as e:
+        logger.error(f"Export projects error: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to export projects'}), 500

@@ -186,11 +186,34 @@ export default function CSpace() {
         reactions: 0
       }
 
-      // Only add if it's not from current user (to avoid duplicates from optimistic updates)
+      // Add message to UI (with duplicate prevention)
       setMessages(prev => {
-        // Check if message already exists
-        const exists = prev.some(msg => msg.id === newMsg.id)
-        if (exists) return prev
+        // Check if message already exists by ID
+        const existsById = prev.some(msg => msg.id === newMsg.id)
+        if (existsById) {
+          console.log('Message already exists, skipping:', newMsg.id)
+          return prev
+        }
+        
+        // If message is from current user, it was already added optimistically
+        // We should have updated the temp message in the REST API response
+        // So if socket arrives for current user's message, check if we already have it
+        if (newMsg.user.user_id === user?.user_id) {
+          // Check if we already have this message content
+          const alreadyHasContent = prev.some(msg => 
+            msg.content === newMsg.content &&
+            msg.user.user_id === newMsg.user.user_id &&
+            Math.abs(new Date(msg.timestamp) - new Date(newMsg.timestamp)) < 5000 // Within 5 seconds
+          )
+          
+          if (alreadyHasContent) {
+            console.log('Message from current user already exists, skipping socket duplicate')
+            return prev
+          }
+        }
+        
+        // Add new message
+        console.log('Adding new message:', newMsg.id)
         return [...prev, newMsg]
       })
     }
@@ -214,12 +237,22 @@ export default function CSpace() {
     socketService.on('new_message', handleNewMessage)
     socketService.on('user_typing', handleUserTyping)
     socketService.on('user_stopped_typing', handleUserStoppedTyping)
+    
+    // Handle socket errors
+    const handleSocketError = (data) => {
+      console.error('Socket error:', data)
+      setModalTitle('Connection Error')
+      setModalMessage(data.message || 'A connection error occurred')
+      setShowErrorModal(true)
+    }
+    socketService.on('error', handleSocketError)
 
     // Cleanup on unmount
     return () => {
       socketService.off('new_message', handleNewMessage)
       socketService.off('user_typing', handleUserTyping)
       socketService.off('user_stopped_typing', handleUserStoppedTyping)
+      socketService.off('error', handleSocketError)
       socketService.leaveProject(id)
     }
   }, [id])
@@ -294,9 +327,12 @@ export default function CSpace() {
         avatar: user?.profile_pic_url || user?.avatar_url || null,
         user_id: user?.user_id
       },
-      content: messageContent,
+      content: messageContent || '📎 Attachment',
       timestamp: new Date(),
-      type: 'text',
+      type: fileToSend ? 'file' : 'text',
+      message_type: fileToSend ? 'file' : 'text',
+      attached_file_url: null,
+      attached_thumbnail: null,
       sending: true
     }
 
@@ -329,16 +365,8 @@ export default function CSpace() {
         }
       }
       
+      // Send message via REST API (backend will handle SocketIO broadcast)
       const response = await cspaceApi.sendMessage(id, {
-        message_content: messageContent || '📎 Attachment',
-        message_type: attachedFileUrl ? 'file' : 'text',
-        channel: selectedChannel,
-        attached_file_url: attachedFileUrl,
-        attached_thumbnail: attachedThumbnail
-      })
-
-      // Emit via SocketIO for real-time broadcasting
-      socketService.sendMessage(id, {
         message_content: messageContent || '📎 Attachment',
         message_type: attachedFileUrl ? 'file' : 'text',
         channel: selectedChannel,
@@ -355,15 +383,15 @@ export default function CSpace() {
               content: msg.content,
               timestamp: new Date(response.data.cspace_message.sent_at),
               type: msg.type,
+              message_type: response.data.cspace_message.message_type,
+              attached_file_url: response.data.cspace_message.attached_file_url,
+              attached_thumbnail: response.data.cspace_message.attached_thumbnail,
               sending: false
             }
           : msg
       ))
 
-      // Show success feedback
-      setModalTitle('Message Sent')
-      setModalMessage('Your message has been delivered successfully.')
-      setShowSuccessModal(true)
+      // Message sent successfully (socket will notify others)
     } catch (err) {
       console.error('Error sending message:', err)
       

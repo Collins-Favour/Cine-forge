@@ -42,8 +42,16 @@ class Scene(db.Model):
     checklist_items = db.relationship('ChecklistItem', backref='scene', lazy='dynamic', cascade='all, delete-orphan')
     budget_items = db.relationship('BudgetItem', backref='scene', lazy='dynamic')
     
-    def to_dict(self, include_relationships=False):
-        """Serialize scene to dictionary"""
+    def to_dict(self, include_relationships=False, relationship_data=None):
+        """
+        Serialize scene to dictionary
+        
+        Args:
+            include_relationships: Whether to include relationships
+            relationship_data: Pre-loaded relationship data to avoid N+1 queries
+                              Format: {'characters': [...], 'panels_count': int, 
+                                      'checklist_items_count': int}
+        """
         data = {
             'scene_id': self.scene_id,
             'project_id': self.project_id,
@@ -71,9 +79,14 @@ class Scene(db.Model):
         }
         
         if include_relationships:
-            data['characters'] = [sc.to_dict() for sc in self.characters.all()]
-            data['panels_count'] = self.storyboard_panels.count()
-            data['checklist_items_count'] = self.checklist_items.count()
+            if relationship_data:
+                # Use pre-loaded data to avoid N+1 queries  
+                data.update(relationship_data)
+            else:
+                # Fallback to lazy loading (slower)
+                data['characters'] = [sc.to_dict() for sc in self.characters.all()]
+                data['panels_count'] = self.storyboard_panels.count()
+                data['checklist_items_count'] = self.checklist_items.count()
         
         return data
     

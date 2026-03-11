@@ -326,6 +326,14 @@ export const adminApi = {
     return api.put(`/admin/users/${userId}`, data)
   },
 
+  deactivateUser: (userId) => {
+    return api.patch(`/admin/users/${userId}/deactivate`)
+  },
+
+  activateUser: (userId) => {
+    return api.patch(`/admin/users/${userId}/activate`)
+  },
+
   deleteUser: (userId) => {
     return api.delete(`/admin/users/${userId}`)
   },
@@ -341,6 +349,25 @@ export const adminApi = {
 
   getStatsOverview: () => {
     return api.get('/admin/stats/overview')
+  },
+
+  // Export functions
+  exportUsers: () => {
+    return api.get('/admin/export/users', {
+      responseType: 'blob'
+    })
+  },
+
+  exportAnalytics: (days = 30) => {
+    return api.get(`/admin/export/analytics?days=${days}`, {
+      responseType: 'blob'
+    })
+  },
+
+  exportProjects: () => {
+    return api.get('/admin/export/projects', {
+      responseType: 'blob'
+    })
   },
 
   // Security Logs

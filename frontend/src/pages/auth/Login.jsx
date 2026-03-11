@@ -28,13 +28,18 @@ export default function Login() {
     setIsLoading(true)
     try {
       const response = await api.post('/auth/login', data)
-      const { user, access_token } = response.data
+      const { user, access_token, refresh_token } = response.data
       
-      login(user, access_token)
+      login(user, access_token, refresh_token)
       toast.success('Welcome back!')
       navigate('/dashboard')
     } catch (error) {
-      toast.error(error.response?.data?.error || 'Invalid credentials')
+      const errMsg = error.response?.data?.error || 'Invalid credentials'
+      if (error.response?.status === 429) {
+        toast.error('Too many login attempts. Please wait a moment.')
+      } else {
+        toast.error(errMsg)
+      }
     } finally {
       setIsLoading(false)
     }

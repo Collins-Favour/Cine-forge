@@ -5,6 +5,9 @@ from functools import wraps
 from flask import request, jsonify
 from flask_jwt_extended import get_jwt_identity
 from models import ProjectCollaborator
+from utils.logger import get_logger
+
+logger = get_logger('cineforge.api')
 
 
 def validate_request(required_fields):
@@ -47,7 +50,15 @@ def project_permission_required(required_role):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            user_id = get_jwt_identity()
+            try:
+                identity = get_jwt_identity()
+                if identity is None:
+                    return jsonify({'error': 'Authentication required'}), 401
+                user_id = int(identity)
+            except (ValueError, TypeError) as e:
+                logger.error(f"Invalid JWT identity: {e}")
+                return jsonify({'error': 'Invalid authentication token'}), 401
+            
             project_id = kwargs.get('project_id')
             
             if not project_id:
@@ -55,8 +66,12 @@ def project_permission_required(required_role):
             
             # Check if user is admin - admins have access to all projects
             from models import User
-            user = User.query.get(int(user_id))
-            if user and user.role == 'admin':
+            user = User.query.get(user_id)
+            if not user:
+                logger.warning(f"User {user_id} from JWT not found in database")
+                return jsonify({'error': 'User not found'}), 401
+            
+            if user.role == 'admin':
                 return f(*args, **kwargs)
             
             # Check if user is collaborator
@@ -66,6 +81,7 @@ def project_permission_required(required_role):
             ).first()
             
             if not collaboration:
+                logger.info(f"Access denied: user {user_id} has no access to project {project_id}")
                 return jsonify({'error': 'Access denied'}), 403
             
             # Check role hierarchy
@@ -73,6 +89,10 @@ def project_permission_required(required_role):
             required_role_level = role_hierarchy.get(required_role, 0)
             
             if user_role_level < required_role_level:
+                logger.info(
+                    f"Insufficient permissions: user {user_id} has role '{collaboration.role}' "
+                    f"but needs '{required_role}' for project {project_id}"
+                )
                 return jsonify({'error': 'Insufficient permissions'}), 403
             
             return f(*args, **kwargs)

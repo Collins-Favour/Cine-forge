@@ -4,10 +4,13 @@ Handles scene CRUD, scene breakdown, and AI suggestions
 """
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, Scene, SceneCharacter, Character
+from sqlalchemy import func
+from sqlalchemy.orm import selectinload
+from models import db, Scene, SceneCharacter, Character, StoryboardPanel, ChecklistItem
 from utils.decorators import validate_request, project_permission_required
 from utils.helpers import log_activity, paginate_query
-from services import GroqService, GeminiService
+from utils.cache import cache_get, cache_set, cache_key, invalidate_project_cache
+from services import GroqService
 
 scenes_bp = Blueprint('scenes', __name__)
 
@@ -16,19 +19,64 @@ scenes_bp = Blueprint('scenes', __name__)
 @jwt_required()
 @project_permission_required('viewer')
 def get_scenes(project_id):
-    """Get all scenes for a project"""
+    """Get all scenes for a project with optimized queries"""
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
     
+    # Try cache first
+    cache_k = cache_key('scenes', 'project', project_id, 'page', page, 'per_page', per_page)
+    cached_result = cache_get(cache_k)
+    if cached_result:
+        return jsonify(cached_result), 200
+    
+    # Use eager loading for characters
     query = Scene.query.filter_by(project_id=project_id)\
+        .options(selectinload(Scene.characters))\
         .order_by(Scene.scene_number)
     
     result = paginate_query(query, page, per_page)
     
-    return jsonify({
-        'scenes': [s.to_dict(include_relationships=True) for s in result['items']],
+    # Bulk load relationship counts for all scenes
+    scene_ids = [s.scene_id for s in result['items']]
+    
+    if scene_ids:
+        panel_counts = db.session.query(
+            StoryboardPanel.scene_id,
+            func.count(StoryboardPanel.panel_id).label('count')
+        ).filter(StoryboardPanel.scene_id.in_(scene_ids))\
+         .group_by(StoryboardPanel.scene_id).all()
+        
+        checklist_counts = db.session.query(
+            ChecklistItem.scene_id,
+            func.count(ChecklistItem.item_id).label('count')
+        ).filter(ChecklistItem.scene_id.in_(scene_ids))\
+         .group_by(ChecklistItem.scene_id).all()
+        
+        panel_dict = {sid: count for sid, count in panel_counts}
+        checklist_dict = {sid: count for sid, count in checklist_counts}
+    else:
+        panel_dict = {}
+        checklist_dict = {}
+    
+    # Convert scenes to dict with pre-loaded data
+    scenes_data = []
+    for scene in result['items']:
+        relationship_data = {
+            'characters': [sc.to_dict() for sc in scene.characters.all()],
+            'panels_count': panel_dict.get(scene.scene_id, 0),
+            'checklist_items_count': checklist_dict.get(scene.scene_id, 0)
+        }
+        scenes_data.append(scene.to_dict(include_relationships=True, relationship_data=relationship_data))
+    
+    response = {
+        'scenes': scenes_data,
         'pagination': result['pagination']
-    }), 200
+    }
+    
+    # Cache for 3 minutes
+    cache_set(cache_k, response, timeout=180)
+    
+    return jsonify(response), 200
 
 
 @scenes_bp.route('/project/<int:project_id>/scenes/<int:scene_id>', methods=['GET'])
@@ -53,7 +101,7 @@ def get_scene(project_id, scene_id):
 @validate_request(['scene_number', 'description'])
 def create_scene(project_id):
     """Create new scene"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     # Check scene limit
@@ -107,6 +155,9 @@ def create_scene(project_id):
                 f'Created scene {scene.scene_number}', 'scene', scene.scene_id)
     db.session.commit()
     
+    # Invalidate project and scene caches
+    invalidate_project_cache(project_id)
+    
     return jsonify({
         'message': 'Scene created successfully',
         'scene': scene.to_dict()
@@ -118,7 +169,7 @@ def create_scene(project_id):
 @project_permission_required('writer')
 def update_scene(project_id, scene_id):
     """Update scene"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     scene = Scene.query.filter_by(
         scene_id=scene_id,
         project_id=project_id
@@ -144,6 +195,9 @@ def update_scene(project_id, scene_id):
                 f'Updated scene {scene.scene_number}')
     db.session.commit()
     
+    # Invalidate project and scene caches
+    invalidate_project_cache(project_id)
+    
     return jsonify({
         'message': 'Scene updated successfully',
         'scene': scene.to_dict()
@@ -155,7 +209,7 @@ def update_scene(project_id, scene_id):
 @project_permission_required('writer')
 def delete_scene(project_id, scene_id):
     """Delete scene"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     scene = Scene.query.filter_by(
         scene_id=scene_id,
         project_id=project_id
@@ -170,6 +224,9 @@ def delete_scene(project_id, scene_id):
                 f'Deleted scene {scene_number}')
     db.session.commit()
     
+    # Invalidate project and scene caches
+    invalidate_project_cache(project_id)
+    
     return jsonify({'message': 'Scene deleted successfully'}), 200
 
 
@@ -178,7 +235,7 @@ def delete_scene(project_id, scene_id):
 @project_permission_required('writer')
 def analyze_scene(project_id, scene_id):
     """Generate AI suggestions for scene"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     scene = Scene.query.filter_by(
         scene_id=scene_id,
         project_id=project_id
@@ -189,18 +246,17 @@ def analyze_scene(project_id, scene_id):
     
     try:
         groq_service = GroqService()
-        gemini_service = GeminiService()
         
         # Generate scene analysis
         scene_analysis = groq_service.generate_scene_description(scene.description)
-        mood_analysis = gemini_service.analyze_scene_for_mood(scene.description)
+        mood_analysis = groq_service.analyze_scene_for_mood(scene.description)
         location_suggestions = groq_service.suggest_locations(scene.description)
         
         # Update scene with suggestions
         if scene_analysis:
             scene.cinematography_notes = scene_analysis
         if mood_analysis:
-            scene.mood_suggestion = mood_analysis.get('analysis', '')
+            scene.mood_suggestion = mood_analysis.get('analysis', mood_analysis.get('atmosphere', ''))
         if location_suggestions:
             scene.location_suggestion = str(location_suggestions)
         
@@ -212,7 +268,7 @@ def analyze_scene(project_id, scene_id):
             operation_type='scene_breakdown',
             input_data={'scene_id': scene_id},
             output_data={'scene_analysis': scene_analysis, 'mood': mood_analysis, 'locations': location_suggestions},
-            ai_model='Groq + Gemini',
+            ai_model='Groq Llama 3.3 70B',
             status='completed'
         )
         db.session.add(ai_log)
@@ -234,7 +290,7 @@ def analyze_scene(project_id, scene_id):
 @validate_request(['character_id'])
 def add_character_to_scene(project_id, scene_id):
     """Add character to scene"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     data = request.get_json()
     
     scene = Scene.query.filter_by(scene_id=scene_id, project_id=project_id).first()
@@ -268,7 +324,7 @@ def add_character_to_scene(project_id, scene_id):
 @project_permission_required('writer')
 def remove_character_from_scene(project_id, scene_id, scene_character_id):
     """Remove character from scene"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     scene_char = SceneCharacter.query.filter_by(scene_character_id=scene_character_id, scene_id=scene_id).first()
     
     if not scene_char:

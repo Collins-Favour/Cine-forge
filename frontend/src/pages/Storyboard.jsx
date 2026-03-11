@@ -90,7 +90,7 @@ export default function Storyboard() {
           : p
       ))
 
-      setModalMessage('Generating AI image with Gemini Imagen 3... This may take 30-60 seconds.')
+      setModalMessage('Generating AI image with Gemini Imagen 4... This may take 30-60 seconds.')
       setIsError(false)
       setShowMessageModal(true)
       

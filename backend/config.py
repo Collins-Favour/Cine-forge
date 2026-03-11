@@ -24,8 +24,16 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
     SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,  # Check connection health before using
-        'pool_recycle': 300,    # Recycle connections every 5 minutes
+        'pool_size': 20,              # Number of connections to maintain
+        'max_overflow': 10,           # Additional connections when pool is full
+        'pool_pre_ping': True,        # Check connection health before using
+        'pool_recycle': 300,          # Recycle connections every 5 minutes
+        'pool_timeout': 30,           # Timeout for getting connection from pool
+        'echo_pool': False,           # Don't log pool checkouts/checkins
+        'connect_args': {
+            'connect_timeout': 10,    # Connection timeout in seconds
+            'options': '-c statement_timeout=30000'  # 30 second query timeout
+        }
     }
     
     # JWT Authentication
@@ -39,7 +47,7 @@ class Config:
     # CORS
     CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
     
-    # AI Services - Groq and Gemini only
+    # AI Services - Groq and Gemini Imagen
     GROQ_API_KEY = os.getenv('GROQ_API_KEY')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
     AI_MODEL = os.getenv('model', 'GPT-4')
@@ -49,10 +57,16 @@ class Config:
     UPLOAD_FOLDER = 'uploads'
     ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'docx'}
     
-    # Redis (for Celery)
+    # Redis (for Celery and Caching)
     REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
     CELERY_BROKER_URL = REDIS_URL
     CELERY_RESULT_BACKEND = REDIS_URL
+    
+    # Cache settings
+    CACHE_TYPE = 'redis'
+    CACHE_REDIS_URL = REDIS_URL
+    CACHE_DEFAULT_TIMEOUT = 300  # 5 minutes
+    CACHE_KEY_PREFIX = 'cineforge:'
     
     # SocketIO
     SOCKETIO_MESSAGE_QUEUE = REDIS_URL

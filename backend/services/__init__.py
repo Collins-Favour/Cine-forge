@@ -2,9 +2,9 @@
 Services Package
 """
 from .groq_service import GroqService
-from .gemini_service import GeminiService
+from .image_service import ImageGenerationService
 
 __all__ = [
     'GroqService',
-    'GeminiService'
+    'ImageGenerationService'
 ]

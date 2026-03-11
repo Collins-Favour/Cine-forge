@@ -16,7 +16,6 @@ import {
   Tag,
   MoreVertical,
   Plus,
-  Play,
   Settings as SettingsIcon
 } from 'lucide-react'
 import { projectsApi } from '@services/apiServices'
@@ -270,18 +269,6 @@ export default function ProjectDetails() {
             </div>
           </div>
         </Link>
-
-        <button className="card hover:shadow-lg transition-all duration-300 group text-left">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-orange-100 flex items-center justify-center group-hover:bg-orange-200 transition-colors">
-              <Play className="w-6 h-6 text-orange-600" />
-            </div>
-            <div>
-              <div className="font-semibold text-dark-900">Preview</div>
-              <div className="text-sm text-dark-600">Watch</div>
-            </div>
-          </div>
-        </button>
       </div>
 
       {/* Tabs */}
