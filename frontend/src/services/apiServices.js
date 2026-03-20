@@ -376,6 +376,10 @@ export const adminApi = {
     return api.get(`/admin/security/logs${queryParams ? `?${queryParams}` : ''}`)
   },
 
+  getSecurityStats: () => {
+    return api.get('/admin/security/stats')
+  },
+
   // Settings
   getSettings: () => {
     return api.get('/admin/settings')

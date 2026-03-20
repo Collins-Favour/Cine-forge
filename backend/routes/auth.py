@@ -10,6 +10,7 @@ from flask_jwt_extended import (
 from models import db, User, UserSession
 from utils.validators import validate_email, validate_password
 from utils.decorators import validate_request
+from utils.helpers import log_activity
 from utils.logger import get_logger
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -99,6 +100,11 @@ def register():
     
     logger.info(f"User registered successfully: id={user.user_id}, email={user.email}, username={user.username}")
     
+    # Log registration activity
+    log_activity(None, user.user_id, 'register', f'New user registered: {user.username}',
+                 entity_type='user', entity_id=user.user_id, ip_address=request.remote_addr)
+    db.session.commit()
+    
     # Create JWT tokens for immediate login after registration
     access_token = create_access_token(identity=str(user.user_id))
     refresh_token = create_refresh_token(identity=str(user.user_id))
@@ -130,10 +136,19 @@ def login():
     
     if not user or not user.check_password(data['password']):
         logger.warning(f"Failed login attempt for email={data.get('email')} from IP={request.remote_addr}")
+        # Log failed login attempt
+        log_activity(None, user.user_id if user else None, 'login_failed',
+                     f'Failed login attempt for {data.get("email")}',
+                     entity_type='auth', ip_address=request.remote_addr)
+        db.session.commit()
         return jsonify({'error': 'Invalid email or password'}), 401
     
     if not user.is_active:
         logger.warning(f"Login attempt on deactivated account: user_id={user.user_id}")
+        log_activity(None, user.user_id, 'login_deactivated',
+                     f'Login attempt on deactivated account: {user.username}',
+                     entity_type='auth', ip_address=request.remote_addr)
+        db.session.commit()
         return jsonify({'error': 'Account is deactivated'}), 403
     
     # Update last login
@@ -153,6 +168,11 @@ def login():
     )
     
     db.session.add(session)
+    
+    # Log successful login
+    log_activity(None, user.user_id, 'login',
+                 f'User logged in: {user.username}',
+                 entity_type='auth', ip_address=request.remote_addr)
     db.session.commit()
     
     logger.info(f"User logged in successfully: user_id={user.user_id}, email={user.email}")
@@ -203,6 +223,10 @@ def logout():
             UserSession.user_id == int(user_id),
             UserSession.expires_at < datetime.utcnow()
         ).delete()
+        
+        # Log logout activity
+        log_activity(None, int(user_id), 'logout', 'User logged out',
+                     entity_type='auth', ip_address=request.remote_addr)
         db.session.commit()
         
         logger.info(f"User logged out: user_id={user_id}")

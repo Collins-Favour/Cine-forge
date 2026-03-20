@@ -7,6 +7,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, User, Project, CSpaceMessage, ActivityLog, UsageAnalytics
 from models.system import SystemSetting
 from utils.logger import get_logger
+from utils.helpers import log_activity
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 import csv
@@ -219,8 +220,8 @@ def get_user_details(user_id):
             .order_by(desc(ActivityLog.created_at)).limit(20).all()
         activity = [
             {
-                'action': a.action,
-                'description': a.description,
+                'action': a.activity_type,
+                'description': a.activity_description,
                 'timestamp': a.created_at.isoformat()
             } for a in activities
         ]
@@ -250,7 +251,7 @@ def get_user_details(user_id):
         'projects': [
             {
                 'project_id': p.project_id,
-                'project_name': p.project_name,
+                'project_name': p.title,
                 'created_at': p.created_at.isoformat() if p.created_at else None
             } for p in projects[:10]
         ],
@@ -320,6 +321,9 @@ def deactivate_user(user_id):
     
     # Deactivate user
     user.is_active = False
+    log_activity(None, admin_user.user_id, 'account_deactivated',
+                 f'Admin deactivated user: {user.username} (ID: {user_id})',
+                 entity_type='user', entity_id=user_id, ip_address=request.remote_addr)
     db.session.commit()
     
     return jsonify({'message': 'User deactivated successfully'}), 200
@@ -339,6 +343,9 @@ def activate_user(user_id):
     
     # Activate user
     user.is_active = True
+    log_activity(None, admin_user.user_id, 'account_activated',
+                 f'Admin activated user: {user.username} (ID: {user_id})',
+                 entity_type='user', entity_id=user_id, ip_address=request.remote_addr)
     db.session.commit()
     
     return jsonify({'message': 'User activated successfully'}), 200
@@ -361,7 +368,11 @@ def delete_user(user_id):
     
     # Permanently delete user from database
     # Note: Related records will be handled by cascade rules in the database schema
+    username = user.username
     db.session.delete(user)
+    log_activity(None, admin_user.user_id, 'user_deleted',
+                 f'Admin permanently deleted user: {username} (ID: {user_id})',
+                 entity_type='user', entity_id=user_id, ip_address=request.remote_addr)
     db.session.commit()
     
     return jsonify({'message': 'User permanently deleted'}), 200
@@ -386,6 +397,9 @@ def admin_reset_password(user_id):
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
     
     user.set_password(new_password)
+    log_activity(None, admin_user.user_id, 'password_reset',
+                 f'Admin reset password for user: {user.username} (ID: {user_id})',
+                 entity_type='user', entity_id=user_id, ip_address=request.remote_addr)
     db.session.commit()
     
     return jsonify({'message': 'Password reset successfully'}), 200
@@ -406,7 +420,7 @@ def get_all_projects():
     query = Project.query
     
     if search:
-        query = query.filter(Project.project_name.ilike(f'%{search}%'))
+        query = query.filter(Project.title.ilike(f'%{search}%'))
     
     pagination = query.order_by(desc(Project.updated_at)).paginate(
         page=page, per_page=per_page, error_out=False
@@ -524,21 +538,30 @@ def get_security_logs():
     
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
+    log_type = request.args.get('type', '')  # filter by activity_type
     
     try:
-        logs = ActivityLog.query.order_by(desc(ActivityLog.created_at))\
+        query = ActivityLog.query
+        
+        # Optional log type filter
+        if log_type:
+            query = query.filter(ActivityLog.activity_type.ilike(f'%{log_type}%'))
+        
+        logs = query.order_by(desc(ActivityLog.created_at))\
             .paginate(page=page, per_page=per_page, error_out=False)
         
         return jsonify({
             'logs': [
                 {
-                    'id': log.id,
+                    'id': log.activity_id,
                     'user_id': log.user_id,
-                    'username': log.user.username if log.user else 'Unknown',
-                    'action': log.action,
-                    'description': log.description,
-                    'ip_address': log.ip_address if hasattr(log, 'ip_address') else None,
-                    'timestamp': log.created_at.isoformat()
+                    'username': log.user.username if log.user else 'System',
+                    'action': log.activity_type,
+                    'description': log.activity_description,
+                    'ip_address': log.ip_address,
+                    'entity_type': log.entity_type,
+                    'project_id': log.project_id,
+                    'timestamp': log.created_at.isoformat() if log.created_at else None
                 } for log in logs.items
             ],
             'total': logs.total,
@@ -546,12 +569,74 @@ def get_security_logs():
             'pages': logs.pages
         }), 200
     except Exception as e:
-        # If ActivityLog doesn't exist, return mock data
+        logger.error(f"Security logs error: {e}", exc_info=True)
         return jsonify({
             'logs': [],
             'total': 0,
             'page': 1,
             'pages': 0
+        }), 200
+
+
+@admin_bp.route('/security/stats', methods=['GET'])
+@jwt_required()
+def get_security_stats():
+    """Get security statistics for the admin dashboard"""
+    admin_user = check_admin()
+    if not admin_user:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    try:
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Total events
+        total_events = db.session.query(func.count(ActivityLog.activity_id)).scalar() or 0
+        
+        # Security alerts (failed logins, deactivations, etc.)
+        security_alerts = db.session.query(func.count(ActivityLog.activity_id)).filter(
+            ActivityLog.activity_type.in_(['login_failed', 'account_deactivated', 'rate_limit_exceeded'])
+        ).scalar() or 0
+        
+        # Active users today (unique users who logged in today)
+        active_users_today = db.session.query(func.count(func.distinct(ActivityLog.user_id))).filter(
+            ActivityLog.activity_type == 'login',
+            ActivityLog.created_at >= today_start
+        ).scalar() or 0
+        
+        # Failed logins today
+        failed_logins = db.session.query(func.count(ActivityLog.activity_id)).filter(
+            ActivityLog.activity_type == 'login_failed',
+            ActivityLog.created_at >= today_start
+        ).scalar() or 0
+        
+        # Events today
+        events_today = db.session.query(func.count(ActivityLog.activity_id)).filter(
+            ActivityLog.created_at >= today_start
+        ).scalar() or 0
+        
+        # Recent registrations today
+        registrations_today = db.session.query(func.count(ActivityLog.activity_id)).filter(
+            ActivityLog.activity_type == 'register',
+            ActivityLog.created_at >= today_start
+        ).scalar() or 0
+        
+        return jsonify({
+            'total_events': total_events,
+            'security_alerts': security_alerts,
+            'active_users_today': active_users_today,
+            'failed_logins': failed_logins,
+            'events_today': events_today,
+            'registrations_today': registrations_today
+        }), 200
+    except Exception as e:
+        logger.error(f"Security stats error: {e}", exc_info=True)
+        return jsonify({
+            'total_events': 0,
+            'security_alerts': 0,
+            'active_users_today': 0,
+            'failed_logins': 0,
+            'events_today': 0,
+            'registrations_today': 0
         }), 200
 
 

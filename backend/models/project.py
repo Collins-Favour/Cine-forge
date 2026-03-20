@@ -133,14 +133,18 @@ class ActivityLog(db.Model):
     __tablename__ = 'activity_log'
     
     activity_id = db.Column(db.Integer, primary_key=True)
-    project_id = db.Column(db.Integer, db.ForeignKey('projects.project_id', ondelete='CASCADE'), nullable=False, index=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.project_id', ondelete='CASCADE'), nullable=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=True, index=True)
     activity_type = db.Column(db.String(100), nullable=False)
     activity_description = db.Column(db.Text)
     entity_type = db.Column(db.String(50), comment='scene, panel, message, etc.')
     entity_id = db.Column(db.Integer)
+    ip_address = db.Column(db.String(45))
     activity_metadata = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    
+    # Relationships
+    user = db.relationship('User', backref=db.backref('activities', lazy='dynamic'), foreign_keys=[user_id])
     
     def to_dict(self):
         """Serialize activity to dictionary"""

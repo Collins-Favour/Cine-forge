@@ -17,9 +17,19 @@ export default function SecurityLogs() {
     }
   )
 
+  const { data: statsData } = useQuery(
+    'admin-security-stats',
+    () => adminApi.getSecurityStats(),
+    {
+      refetchInterval: 10000,
+      refetchIntervalInBackground: true
+    }
+  )
+
   const logs = logsData?.data?.logs || []
   const totalLogs = logsData?.data?.total || 0
   const totalPages = logsData?.data?.pages || 1
+  const securityStats = statsData?.data || {}
 
   const getActionIcon = (action) => {
     if (action.includes('login')) return <User className="w-4 h-4" />
@@ -58,25 +68,25 @@ export default function SecurityLogs() {
           <StatCard
             icon={<Activity className="w-6 h-6" />}
             label="Total Events"
-            value={totalLogs}
+            value={securityStats.total_events ?? totalLogs}
             color="primary-500"
           />
           <StatCard
             icon={<AlertTriangle className="w-6 h-6" />}
             label="Security Alerts"
-            value="0"
+            value={securityStats.security_alerts ?? 0}
             color="accent-orange"
           />
           <StatCard
             icon={<User className="w-6 h-6" />}
             label="Active Users Today"
-            value={logs.filter(l => l.action?.includes('login')).length}
+            value={securityStats.active_users_today ?? 0}
             color="accent-green"
           />
           <StatCard
             icon={<Shield className="w-6 h-6" />}
             label="Failed Logins"
-            value="0"
+            value={securityStats.failed_logins ?? 0}
             color="red-500"
           />
         </div>
