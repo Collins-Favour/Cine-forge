@@ -1,4 +1,4 @@
-﻿import { useRef } from 'react'
+import { useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { 
   PerspectiveCamera, 
@@ -215,7 +215,7 @@ export default function LandingPage() {
               <span className="text-lg font-display font-bold gradient-text">CineForge AI</span>
             </div>
             <div className="text-sm text-dark-600">
-              Â© 2026 CineForge AI. All rights reserved.
+              &copy; 2026 CineForge AI. All rights reserved.
             </div>
           </div>
         </div>
